@@ -99,7 +99,7 @@ bool PadState::set(const PadTranslator &translator,
             }
         }
 
-        // dump();
+        dump();
         update();
         return true;
     }

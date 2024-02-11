@@ -12,6 +12,9 @@
 #include "pad_manager.h"
 #include "util.h"
 #include "hid_info.h"
+#include "debug.h"
+
+#include <tusb_xinput/xinput_host.h>
 
 extern "C"
 {
@@ -31,7 +34,6 @@ extern "C"
         hcd_devtree_get_info(dev_addr, &devInfo);
         return std::min<int>(1, std::max<int>(0, static_cast<int>(devInfo.hub_port) - 1));
     }
-
     // 邪悪すぎるのでどうにかしたい
 }
 
@@ -45,8 +47,8 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
     uint16_t vid, pid;
     tuh_vid_pid_get(dev_addr, &vid, &pid);
 
-    printf("HID device address = %d, instance = %d is mounted\n", dev_addr, instance);
-    printf("VID = %04x, PID = %04x\r\n", vid, pid);
+    DPRINT(("HID device address = %d, instance = %d is mounted\n", dev_addr, instance));
+    DPRINT(("VID = %04x, PID = %04x\r\n", vid, pid));
 
     util::dumpBytes(desc_report, desc_len);
 
@@ -65,13 +67,13 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
 
     if (!tuh_hid_receive_report(dev_addr, instance))
     {
-        printf("Error: cannot request to receive report\r\n");
+        DPRINT(("Error: cannot request to receive report\r\n"));
     }
 }
 
 extern "C" void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 {
-    printf("HID device address = %d, instance = %d is unmounted\n", dev_addr, instance);
+    DPRINT(("HID device address = %d, instance = %d is unmounted\n", dev_addr, instance));
 }
 
 extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr,
@@ -96,6 +98,93 @@ extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr,
 
     if (!tuh_hid_receive_report(dev_addr, instance))
     {
-        printf("Error: cannot request to receive report\r\n");
+        DPRINT(("Error: cannot request to receive report\r\n"));
+    }
+}
+
+// XINPUT
+extern "C"
+{
+    const usbh_class_driver_t *usbh_app_driver_get_cb(uint8_t *driver_count)
+    {
+        *driver_count = 1;
+        return &usbh_xinput_driver;
+    }
+
+    void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *report, uint16_t len)
+    {
+        auto *xid_itf = reinterpret_cast<const xinputh_interface_t *>(report);
+        auto *p = &xid_itf->pad;
+
+        if (xid_itf->connected && xid_itf->new_pad_data)
+        {
+            int port = getHubPort(dev_addr);
+
+            uint16_t vid, pid;
+            tuh_vid_pid_get(dev_addr, &vid, &pid);
+
+            auto scale = [](int v)
+            {
+                return (v + 32768) / 256;
+            };
+
+            PadManager::PadInput pi;
+            pi.vid = vid;
+            pi.pid = pid;
+            pi.buttons = p->wButtons;
+            pi.analogs[0] = scale(p->sThumbLX);
+            pi.analogs[1] = scale(p->sThumbLY);
+            pi.analogs[2] = scale(p->sThumbRX);
+            pi.analogs[3] = p->bLeftTrigger;
+            pi.analogs[4] = p->bRightTrigger;
+            pi.analogs[5] = scale(p->sThumbRY);
+            PadManager::instance().setData(port, pi);
+
+            // TU_LOG1("%d: [%02x, %02x], Buttons %04x, LT: %02x RT: %02x, LX: %d, LY: %d, RX: %d, RY: %d\n",
+            //         port, dev_addr, instance, p->wButtons, p->bLeftTrigger, p->bRightTrigger, p->sThumbLX, p->sThumbLY, p->sThumbRX, p->sThumbRY);
+        }
+        tuh_xinput_receive_report(dev_addr, instance);
+    }
+
+    void tuh_xinput_mount_cb(uint8_t dev_addr, uint8_t instance, const xinputh_interface_t *xinput_itf)
+    {
+        uint16_t vid, pid;
+        tuh_vid_pid_get(dev_addr, &vid, &pid);
+
+        DPRINT(("XINPUT device address = %d, instance = %d is mounted\n", dev_addr, instance));
+        DPRINT(("VID = %04x, PID = %04x\r\n", vid, pid));
+
+        if (xinput_itf->connected ||
+            xinput_itf->type != XBOX360_WIRELESS)
+        {
+            tuh_xinput_set_led(dev_addr, instance, 0, true);
+            tuh_xinput_set_led(dev_addr, instance, 1, true);
+            tuh_xinput_set_rumble(dev_addr, instance, 0, 0, true);
+        }
+        tuh_xinput_receive_report(dev_addr, instance);
+
+        switch (xinput_itf->type)
+        {
+        case XBOX360_WIRELESS:
+            DPRINT(("Xbox 360 Wireless Controller\n"));
+            break;
+        case XBOX360_WIRED:
+            DPRINT(("Xbox 360 Wired Controller\n"));
+            break;
+        case XBOXONE:
+            DPRINT(("Xbox One Controller\n"));
+            break;
+        case XBOXOG:
+            DPRINT(("Xbox OG Controller\n"));
+            break;
+        default:
+            DPRINT(("Unknown Controller\n"));
+            break;
+        }
+    }
+
+    void tuh_xinput_umount_cb(uint8_t dev_addr, uint8_t instance)
+    {
+        DPRINT(("XINPUT device address = %d, instance = %d is unmounted\n", dev_addr, instance));
     }
 }

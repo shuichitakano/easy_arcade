@@ -34,6 +34,7 @@ add_executable(arcade_play
         pad_manager.cpp
         hid_app.cpp
         hid_info.cpp
+        third_party/tusb_xinput/xinput_host.c
         )
 
 pico_set_program_name(arcade_play "arcade_play")
@@ -46,11 +47,6 @@ pico_enable_stdio_usb(arcade_play 0)
 set(FAMILY rp2040)
 set(BOARD pico_sdk)
 set(TINYUSB_DEBUG_LEVE 0)
-#include(${PICO_TINYUSB_PATH}/hw/bsp/family_support.cmake)
-#family_get_project_name(PROJECT ${CMAKE_CURRENT_LIST_DIR})
-#include(${PICO_TINYUSB_PATH}/hw/bsp/${FAMILY}/family.cmake)
-#family_configure_target(arcade_play ${CMAKE_CURRENT_LIST_DIR})
-# add_compile_definitions(CFG_TUSB_DEBUG=0)
 
 # Add the standard library to the build
 target_link_libraries(arcade_play
@@ -63,6 +59,7 @@ PRIVATE
 target_include_directories(arcade_play
 PRIVATE
     .
+    third_party
 )
 
 # Add any user requested libraries

@@ -12,6 +12,7 @@ extern "C"
     // #define CFG_TUSB_DEBUG 2
 
 #define CFG_TUH_ENUMERATION_BUFSIZE 1024 // DS4とか
+#define CFG_TUH_XINPUT 1
 
 #define CFG_TUSB_RHPORT0_MODE OPT_MODE_HOST
 
