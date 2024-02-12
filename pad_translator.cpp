@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include "serializer.h"
 #include "debug.h"
 
 int getLevel(PadConfig::AnalogPos p)
@@ -78,16 +79,17 @@ void PadConfig::Unit::dump() const
     constexpr char apTable[] = {'H', 'M', 'L'};
     constexpr char hatTable[] = {'L', 'R', 'U', 'D'};
 
-    printf("%c[%d]:A%c,%c:H%c: %d\n",
-           typeTable[(int)type],
-           number,
-           apTable[(int)analogOn],
-           apTable[(int)analogOff],
-           hatTable[(int)hatPos],
-           index);
+    DPRINT(("%c[%d]:A%c,%c:H%c: %d\n",
+            typeTable[(int)type],
+            number,
+            apTable[(int)analogOn],
+            apTable[(int)analogOff],
+            hatTable[(int)hatPos],
+            index));
 }
 
-bool PadConfig::convertButton(int i, uint32_t buttons, const int *analogs, int nAnalogs, int hat) const
+bool PadConfig::convertButton(int i, const uint32_t *buttons, int nButtons,
+                              const int *analogs, int nAnalogs, int hat) const
 {
     if (static_cast<size_t>(i) >= buttons_.size())
     {
@@ -98,7 +100,7 @@ bool PadConfig::convertButton(int i, uint32_t buttons, const int *analogs, int n
     switch (cfg.type)
     {
     case Type::BUTTON:
-        return buttons & (1u << cfg.number);
+        return buttons[cfg.number >> 5] & (1u << (cfg.number & 31));
 
     case Type::ANALOG:
         return cfg.testAnalog(analogs[cfg.number]);
@@ -112,7 +114,8 @@ bool PadConfig::convertButton(int i, uint32_t buttons, const int *analogs, int n
     return false;
 }
 
-int8_t PadConfig::convertAnalog(int i, uint32_t buttons, const int *analogs, int nAnalogs, int hat) const
+int8_t PadConfig::convertAnalog(int i, const uint32_t *buttons, int nButtons,
+                                const int *analogs, int nAnalogs, int hat) const
 {
     // todo
     return 0;
@@ -128,7 +131,7 @@ void PadConfig::dump() const
 {
     if (!buttons_.empty())
     {
-        printf("buttons\n");
+        DPRINT(("buttons\n"));
         for (auto &v : buttons_)
         {
             v.dump();
@@ -136,11 +139,73 @@ void PadConfig::dump() const
     }
     if (!analogs_.empty())
     {
-        printf("analogs\n");
+        DPRINT(("analogs\n"));
         for (auto &v : analogs_)
         {
             v.dump();
         }
+    }
+}
+
+void PadConfig::serialize(Serializer &s) const
+{
+    s.append16u(vid_);
+    s.append16u(pid_);
+
+    auto writeUnit = [&](const Unit &v)
+    {
+        s.append8u(static_cast<uint8_t>(v.type));
+        s.append8u(v.number);
+        s.append8u(static_cast<uint8_t>(v.analogOn));
+        s.append8u(static_cast<uint8_t>(v.analogOff));
+        s.append8u(static_cast<uint8_t>(v.hatPos));
+        s.append8u(v.index);
+        s.append8u(v.subIndex);
+    };
+
+    s.append16u(buttons_.size());
+    for (auto &v : buttons_)
+    {
+        writeUnit(v);
+    }
+
+    s.append8u(analogs_.size());
+    for (auto &v : analogs_)
+    {
+        writeUnit(v);
+    }
+}
+
+PadConfig::PadConfig(Deserializer &s)
+{
+    vid_ = s.peek16u();
+    pid_ = s.peek16u();
+
+    auto readUnit = [&]()
+    {
+        Unit v;
+        v.type = static_cast<Type>(s.peek8u());
+        v.number = s.peek8u();
+        v.analogOn = static_cast<AnalogPos>(s.peek8u());
+        v.analogOff = static_cast<AnalogPos>(s.peek8u());
+        v.hatPos = static_cast<HatPos>(s.peek8u());
+        v.index = s.peek8u();
+        v.subIndex = s.peek8u();
+        return v;
+    };
+
+    auto n = s.peek16u();
+    buttons_.reserve(n);
+    for (auto i = 0u; i < n; ++i)
+    {
+        buttons_.push_back(readUnit());
+    }
+
+    n = s.peek8u();
+    analogs_.reserve(n);
+    for (auto i = 0u; i < n; ++i)
+    {
+        analogs_.push_back(readUnit());
     }
 }
 
@@ -221,11 +286,6 @@ void PadTranslator::sort()
 {
     std::sort(configs_.begin(), configs_.end(), [&](auto &a, auto &b)
               { return a.getDeviceID() < b.getDeviceID(); });
-    printf("sort\n");
-    for (auto &v : configs_)
-    {
-        printf("config %04x, %04x\n", v.getVID(), v.getPID());
-    }
 }
 
 void PadTranslator::append(PadConfig &&cnf)
@@ -243,4 +303,41 @@ void PadTranslator::append(PadConfig &&cnf)
         configs_.push_back(std::move(cnf));
         sort();
     }
+}
+
+void PadTranslator::serialize(Serializer &s) const
+{
+    s.append(configs_.size());
+
+    int n = 0;
+    for (auto &v : configs_)
+    {
+        if (s.exceedLimit())
+        {
+            s.append8u(0);
+        }
+        s.append8u(1); // enabled
+        v.serialize(s);
+        ++n;
+    }
+    DPRINT(("store %d/%d configs.\n", n, configs_.size()));
+}
+
+void PadTranslator::deserialize(Deserializer &s)
+{
+    configs_.clear();
+    auto nn = s.peek();
+
+    DPRINT(("%d configs...\n", nn));
+
+    int n = 0;
+    while (n < nn && s.peek8u())
+    {
+        PadConfig cnf(s);
+        configs_.push_back(std::move(cnf));
+        ++n;
+    }
+
+    DPRINT(("load %d/%d configs.\n", n, nn));
+    sort();
 }

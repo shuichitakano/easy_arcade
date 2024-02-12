@@ -34,7 +34,10 @@ add_executable(arcade_play
         pad_manager.cpp
         hid_app.cpp
         hid_info.cpp
+        serializer.cpp
         third_party/tusb_xinput/xinput_host.c
+        usb_app_driver.cpp
+        usb_midi.cpp
         )
 
 pico_set_program_name(arcade_play "arcade_play")
@@ -56,6 +59,8 @@ PRIVATE
         tinyusb_host
         )
 
+add_subdirectory(third_party/usb_midi_host)
+
 target_include_directories(arcade_play
 PRIVATE
     .
@@ -68,7 +73,10 @@ PRIVATE
         hardware_watchdog
         hardware_adc
 	hardware_dma
-)
+        hardware_flash
+
+        usb_midi_host
+        )
 
 if (PICO_BOARD STREQUAL "pico_w")
 target_link_libraries(arcade_play

@@ -301,6 +301,8 @@ int main()
     }
 #endif
 
+    PadManager::instance().load();
+
     printf("start.\n");
     //    setLED(true);
 
@@ -384,21 +386,21 @@ int main()
 
         tuh_task();
 
+#if 0
         static int ct = 0;
         if (++ct > 100000)
         {
             ct = 0;
-            /*
-            printf("ct%d, int %d, r%d,%d\n",
-                   vsyncDetector_.getVSyncCounter(),
-                   vsyncDetector_.getInterval(),
-                   vsyncDetector_.getMin(),
-                   vsyncDetector_.getMax());
-*/
+            // printf("ct%d, int %d, r%d,%d\n",
+            //        vsyncDetector_.getVSyncCounter(),
+            //        vsyncDetector_.getInterval(),
+            //        vsyncDetector_.getMin(),
+            //        vsyncDetector_.getMax());
             static bool f = false;
             f ^= true;
             setLED(f);
         }
+#endif
     }
     return 0;
 }

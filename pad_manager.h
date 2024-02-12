@@ -19,22 +19,35 @@ class PadManager
 {
 public:
     static constexpr int N_ANALOGS = 9;
-    static constexpr int N_BUTTONS = 32;
+    static constexpr int N_BUTTONS = 128;
 
-    static constexpr int N_PORTS = 2;
+    static constexpr int N_PORTS = 3;
+    static constexpr int N_OUTPUT_PORTS = 2;
+
+    enum class StateKind
+    {
+        PORT0,
+        PORT1,
+        MIDI,
+    };
+
+    static constexpr int VID_MIDI = 0;
+    static constexpr int PID_MIDI = 1;
 
     struct PadInput
     {
         int vid;
         int pid;
-        uint32_t buttons;
+        std::array<uint32_t, N_BUTTONS / 32> buttons;
         int hat;
         std::array<int, N_ANALOGS> analogs;
+
+        bool getButton(int i) const { return (buttons[i >> 5] & (1u << (i & 31))); }
 
         PadInput() { reset(); }
         void reset()
         {
-            buttons = 0;
+            buttons = {};
             hat = -1;
             analogs = {128, 128, 128, 0, 0, 128, 0, 0, 0};
         }
@@ -57,8 +70,11 @@ public:
         latestPadData_[port].reset();
     }
 
-    uint32_t getButtons(int port) const { return padStates_[port].getButtons(); }
+    uint32_t getButtons(int port) const;
     void setVSyncCount(int count);
+
+    void load();
+    void save();
 
 protected:
     void updateNormalMode(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
@@ -82,8 +98,8 @@ private:
 
     struct ButtonSet
     {
-        // ボタンは32個まで
-        uint32_t buttons;
+        // ボタンは N_BUTTONS個まで
+        std::array<uint32_t, N_BUTTONS / 32> buttons;
 
         // アナログのアサインは1つ
         int8_t analogIndex;
@@ -96,14 +112,23 @@ private:
     public:
         ButtonSet() { clear(); }
 
+        bool getButton(int i) const { return (buttons[i >> 5] & (1u << (i & 31))); }
+
         bool hasData() const
         {
-            return buttons || analogIndex >= 0 || hat >= 0;
+            for (auto b : buttons)
+            {
+                if (b)
+                {
+                    return true;
+                }
+            }
+            return analogIndex >= 0 || hat >= 0;
         }
 
         void clear()
         {
-            buttons = 0;
+            buttons = {};
             analogIndex = -1;
             hat = -1;
         }

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <algorithm>
 #include "led.h"
+#include "serializer.h"
 #include "debug.h"
 
 namespace
@@ -171,7 +172,8 @@ void PadManager::setDataNormalMode(int port, const PadInput &input)
 {
     padStates_[port].set(translator_,
                          input.vid, input.pid,
-                         input.buttons, input.analogs.data(), N_ANALOGS, input.hat);
+                         input.buttons.data(), N_BUTTONS,
+                         input.analogs.data(), N_ANALOGS, input.hat);
 }
 
 void PadManager::setDataConfigMode(int port, const PadInput &input)
@@ -179,8 +181,11 @@ void PadManager::setDataConfigMode(int port, const PadInput &input)
     bool anyOn = false;
 
     ButtonSet cur = configMode_.curButtonSet_;
-    cur.buttons |= input.buttons;
-    anyOn |= input.buttons != 0;
+    for (auto i = 0u; i < input.buttons.size(); ++i)
+    {
+        cur.buttons[i] |= input.buttons[i];
+        anyOn |= input.buttons[i] != 0;
+    }
 
     if (input.hat >= 0)
     {
@@ -282,9 +287,9 @@ void PadManager::saveConfigAndExit()
         for (auto &s : sets)
         {
             int subIndex = 0;
-            for (int i = 0; i < 32; ++i)
+            for (int i = 0; i < N_BUTTONS; ++i)
             {
-                if (s.buttons & (1u << i))
+                if (s.getButton(i))
                 {
                     PadConfig::Unit u;
                     u.type = PadConfig::Type::BUTTON;
@@ -329,6 +334,7 @@ void PadManager::saveConfigAndExit()
         {
             printf("save config\n");
             translator_.append({configMode_.vid_, configMode_.pid_, units, {}});
+            save();
         }
     }
 
@@ -345,4 +351,42 @@ void PadManager::setVSyncCount(int count)
     {
         s.setVSyncCount(count);
     }
+}
+
+uint32_t
+PadManager::getButtons(int port) const
+{
+    if (port < 0 || port >= N_OUTPUT_PORTS)
+    {
+        return 0;
+    }
+    if (port == 0)
+    {
+        return padStates_[static_cast<int>(StateKind::PORT0)].getButtons() |
+               padStates_[static_cast<int>(StateKind::MIDI)].getButtons();
+    }
+    else
+    {
+        return padStates_[port].getButtons();
+    }
+}
+
+void PadManager::load()
+{
+    Deserializer s;
+    if (!s)
+    {
+        DPRINT(("no saved data\n"));
+        return;
+    }
+
+    translator_.deserialize(s);
+}
+
+void PadManager::save()
+{
+    Serializer s(65536, 512);
+    translator_.serialize(s);
+
+    s.flash();
 }

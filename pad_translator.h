@@ -8,6 +8,9 @@
 #include <vector>
 #include <tuple>
 
+class Serializer;
+class Deserializer;
+
 class PadConfig
 {
 public:
@@ -69,9 +72,10 @@ public:
 public:
     PadConfig() = default;
     PadConfig(int vid, int pid, const std::vector<Unit> &buttons, const std::vector<Unit> &analogs);
+    PadConfig(Deserializer &s);
 
-    bool convertButton(int i, uint32_t buttons, const int *analogs, int nAnalogs, int hat) const;
-    int8_t convertAnalog(int i, uint32_t buttons, const int *analogs, int nAnalogs, int hat) const;
+    bool convertButton(int i, const uint32_t *buttons, int nButtons, const int *analogs, int nAnalogs, int hat) const;
+    int8_t convertAnalog(int i, const uint32_t *buttons, int nButtons, const int *analogs, int nAnalogs, int hat) const;
 
     size_t getButtonCount() const { return buttons_.size(); }
     size_t getAnalogCount() const { return analogs_.size(); }
@@ -83,6 +87,7 @@ public:
     int getPID() const { return pid_; }
     std::pair<int, int> getDeviceID() const { return {vid_, pid_}; }
 
+    void serialize(Serializer &s) const;
     void dump() const;
 
 private:
@@ -108,6 +113,9 @@ public:
     void setDefaultConfig(PadConfig &&cnf) { defaultConfig_ = std::move(cnf); }
     void append(PadConfig &&cnf);
     const PadConfig *find(int vid, int pid) const;
+
+    void serialize(Serializer &s) const;
+    void deserialize(Deserializer &s);
 
 protected:
     PadConfig *_find(int vid, int pid);

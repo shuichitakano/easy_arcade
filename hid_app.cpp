@@ -92,7 +92,7 @@ extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr,
         padInput.vid = hidInfo.getVID();
         padInput.pid = hidInfo.getPID();
         hidInfo.parseReport(report, len,
-                            padInput.buttons, padInput.hat, padInput.analogs);
+                            padInput.buttons[0], padInput.hat, padInput.analogs);
         PadManager::instance().setData(port, padInput);
     }
 
@@ -105,11 +105,13 @@ extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr,
 // XINPUT
 extern "C"
 {
+#if 0
     const usbh_class_driver_t *usbh_app_driver_get_cb(uint8_t *driver_count)
     {
         *driver_count = 1;
         return &usbh_xinput_driver;
     }
+#endif
 
     void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *report, uint16_t len)
     {
@@ -131,7 +133,7 @@ extern "C"
             PadManager::PadInput pi;
             pi.vid = vid;
             pi.pid = pid;
-            pi.buttons = p->wButtons;
+            pi.buttons[0] = p->wButtons;
             pi.analogs[0] = scale(p->sThumbLX);
             pi.analogs[1] = scale(p->sThumbLY);
             pi.analogs[2] = scale(p->sThumbRX);
@@ -158,8 +160,8 @@ extern "C"
             xinput_itf->type != XBOX360_WIRELESS)
         {
             tuh_xinput_set_led(dev_addr, instance, 0, true);
-            tuh_xinput_set_led(dev_addr, instance, 1, true);
-            tuh_xinput_set_rumble(dev_addr, instance, 0, 0, true);
+            // tuh_xinput_set_led(dev_addr, instance, 1, true);
+            // tuh_xinput_set_rumble(dev_addr, instance, 0, 0, true);
         }
         tuh_xinput_receive_report(dev_addr, instance);
 

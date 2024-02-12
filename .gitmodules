@@ -1,3 +1,6 @@
 [submodule "third_party/tusb_xinput"]
 	path = third_party/tusb_xinput
 	url = https://github.com/Ryzee119/tusb_xinput.git
+[submodule "third_party/usb_midi_host"]
+	path = third_party/usb_midi_host
+	url = https://github.com/rppicomidi/usb_midi_host.git

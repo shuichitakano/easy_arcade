@@ -30,7 +30,8 @@ class PadState
 {
 public:
     bool set(const PadTranslator &,
-             int vid, int pid, uint32_t buttons,
+             int vid, int pid,
+             const uint32_t *buttons, int nButtons,
              const int *analogs, int nAnalogs, int hat);
 
     uint8_t getAnalog(int ch) const { return analog_[ch]; }

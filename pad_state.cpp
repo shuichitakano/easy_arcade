@@ -61,7 +61,9 @@ uint32_t PadState::getButtons() const
 }
 
 bool PadState::set(const PadTranslator &translator,
-                   int vid, int pid, uint32_t buttons, const int *analogs, int nAnalogs, int hat)
+                   int vid, int pid,
+                   const uint32_t *buttons, int nButtons,
+                   const int *analogs, int nAnalogs, int hat)
 {
     mappedButtonsPrev_ = mappedButtons_;
     unmappedButtonsPrev_ = unmappedButtons_;
@@ -75,7 +77,7 @@ bool PadState::set(const PadTranslator &translator,
             auto n = std::min<int>(MAX_BUTTONS, cfg->getButtonCount());
             for (auto i = 0u; i < n; ++i)
             {
-                bool f = cfg->convertButton(i, buttons, analogs, nAnalogs, hat);
+                bool f = cfg->convertButton(i, buttons, nButtons, analogs, nAnalogs, hat);
                 const auto &unit = cfg->getButtonUnit(i);
                 uint32_t m = f ? 1u << unit.index : 0;
                 buttonMap_[i] = m;
@@ -94,12 +96,12 @@ bool PadState::set(const PadTranslator &translator,
             auto n = std::min<int>(MAX_ANALOGS, cfg->getAnalogCount());
             for (auto i = 0u; i < n; ++i)
             {
-                auto v = cfg->convertAnalog(i, buttons, analogs, nAnalogs, hat);
+                auto v = cfg->convertAnalog(i, buttons, nButtons, analogs, nAnalogs, hat);
                 analog_[i] = v;
             }
         }
 
-        dump();
+        // dump();
         update();
         return true;
     }
