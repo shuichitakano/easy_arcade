@@ -5,6 +5,7 @@
 
 #pragma once
 #include <stdio.h>
+#include <hardware/structs/systick.h>
 
 namespace util
 {
@@ -26,5 +27,18 @@ namespace util
         {
             printf("\n");
         }
+    }
+
+    inline void initSysTick()
+    {
+        systick_hw->csr = 0x5;
+        systick_hw->rvr = 0x00FFFFFF;
+    }
+
+    // tick counterを取得
+    // カウンタは減っていくのに注意
+    inline uint32_t getSysTickCounter24()
+    {
+        return systick_hw->cvr;
     }
 }

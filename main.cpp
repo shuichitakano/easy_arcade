@@ -4,7 +4,6 @@
 #include <hardware/gpio.h>
 #include <hardware/adc.h>
 #include <hardware/dma.h>
-#include <hardware/structs/systick.h>
 #include <hardware/structs/ioqspi.h>
 #include <stdint.h>
 #include <tusb.h>
@@ -12,6 +11,7 @@
 #include "pad_manager.h"
 #include "pad_state.h"
 #include "led.h"
+#include "util.h"
 
 #ifdef RASPBERRYPI_PICO_W
 #include "pico/cyw43_arch.h"
@@ -245,19 +245,6 @@ void startADC()
     adc_run(true);
 }
 
-void initSysTick()
-{
-    systick_hw->csr = 0x5;
-    systick_hw->rvr = 0x00FFFFFF;
-}
-
-// tick counterを取得
-// カウンタは減っていくのに注意
-uint32_t getSysTickCounter24()
-{
-    return systick_hw->cvr;
-}
-
 bool __no_inline_not_in_flash_func(getBootButton)()
 {
     const uint CS_PIN_INDEX = 1;
@@ -284,13 +271,15 @@ bool __no_inline_not_in_flash_func(getBootButton)()
     return button_state;
 }
 
+void updateMIDIState();
+
 ////////////////////////
 ////////////////////////
 int main()
 {
     stdio_init_all();
 
-    initSysTick();
+    util::initSysTick();
     initLED();
 
 #ifdef RASPBERRYPI_PICO_W
@@ -339,7 +328,7 @@ int main()
 
     bool prevBtCnf = false;
     bool prevBtCnfLong = false;
-    auto prevCt = getSysTickCounter24();
+    auto prevCt = util::getSysTickCounter24();
     uint32_t ct32 = 0;
     uint32_t ctCnfPush = 0;
 
@@ -347,7 +336,7 @@ int main()
     {
         //        watchdog_update();
 
-        auto cct = getSysTickCounter24();
+        auto cct = util::getSysTickCounter24();
         auto cdct = (prevCt - cct) & 0xffffff;
         ct32 += cdct;
         prevCt = cct;
@@ -385,6 +374,7 @@ int main()
         }
 
         tuh_task();
+        updateMIDIState();
 
 #if 0
         static int ct = 0;
