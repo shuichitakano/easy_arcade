@@ -2,9 +2,11 @@
 #include <pico/stdlib.h>
 #include <hardware/watchdog.h>
 #include <hardware/gpio.h>
+#include <hardware/i2c.h>
 #include <hardware/adc.h>
 #include <hardware/dma.h>
 #include <hardware/structs/ioqspi.h>
+#include <hardware/divider.h>
 #include <stdint.h>
 #include <tusb.h>
 #include <algorithm>
@@ -12,43 +14,18 @@
 #include "pad_state.h"
 #include "led.h"
 #include "util.h"
+#include "board.h"
+#include "lcd.h"
+#include "text_screen.h"
+#include "menu.h"
+#include "app_config.h"
+#include "font.h"
+#include "serializer.h"
+#include "debug.h"
 
 #ifdef RASPBERRYPI_PICO_W
 #include "pico/cyw43_arch.h"
 #endif
-
-static constexpr bool REVERSE_STATE = false; // 541 なら true
-// static constexpr bool REVERSE_STATE = true; // 541 なら true
-
-enum class ButtonGPIO
-{
-    C1 = 1,
-    C2,
-    D1,
-    D2,
-    E1,
-    E2,
-    F1,
-    F2,
-    B1,
-    A2,
-    A1,
-    RIGHT2,
-    RIGHT1,
-    LEFT2,
-    LEFT1,
-    COIN1,
-    COIN2,
-    START1,
-    START2,
-    UP1,
-    UP2,
-    DOWN1,
-    DOWN2 = 26,
-    B2,
-};
-
-static constexpr uint32_t BUTTON_GPIO_MASK = 0b1100011111111111111111111110;
 
 namespace
 {
@@ -93,16 +70,45 @@ class VSyncDetector
     int flipDelay_ = 7; // update単位
     uint32_t counter_ = 0;
 
-    int min_ = 0;
+    int min_ = 256;
     int max_ = 0;
 
     bool prevLv_ = false;
-    int delay_ = 0;
+    // int delay_ = 0;
 
     int interval_ = 0;
     int curInterval_ = 0;
 
+    bool enableFPS_ = false;
+    uint32_t prevVClock_ = 0;
+    uint32_t curFPS100_ = 0;
+    uint32_t aveFrameClock = 0;
+    uint32_t accumVClock_ = 0;
+    int fpsUpdateCounter_ = 0;
+    int fpsStableCounter_ = 0;
+
 public:
+    uint32_t getCounter() const { return counter_; }
+
+    void reset()
+    {
+        min_ = 256;
+        max_ = 0;
+        prevLv_ = false;
+        interval_ = 0;
+        curInterval_ = 0;
+
+        prevVClock_ = 0;
+        curFPS100_ = 0;
+        aveFrameClock = 0;
+        accumVClock_ = 0;
+        fpsUpdateCounter_ = 0;
+        fpsStableCounter_ = 0;
+    }
+
+    void setEnableFPSCount(bool f) { enableFPS_ = f; }
+
+    int getFPS100() const { return curFPS100_; }
     uint32_t getVSyncCounter() const { return counter_; }
     int getInterval() const { return interval_; }
 
@@ -111,6 +117,7 @@ public:
 
     void update(const uint8_t *p, int n)
     {
+        uint32_t clk = util::getSysTickCounter24();
         int th = (max_ + min_) >> 1;
 
         max_ -= th >> 8;
@@ -154,16 +161,85 @@ public:
         {
             interval_ = curInterval_;
             curInterval_ = 0;
-            delay_ = flipDelay_;
+            // delay_ = flipDelay_;
+
+            // update FPS
+            if (enableFPS_)
+            {
+                if (prevVClock_)
+                {
+                    uint32_t vclk = (prevVClock_ - clk) & 0xffffff;
+                    accumVClock_ += vclk;
+                    // 8frame 程度しか24bitカウンタが持たないので
+                    // 素直に64frame毎に処理するわけにはいかない
+
+                    if (++fpsUpdateCounter_ == 64)
+                    {
+                        vclk = accumVClock_ >> 6;
+
+                        if (aveFrameClock == 0 ||
+                            vclk < (aveFrameClock >> 1) ||
+                            (vclk >> 1) > aveFrameClock)
+                        {
+                            fpsStableCounter_ = 0;
+                            curFPS100_ = 0;
+                        }
+                        // printf("ave %d, %d\n", aveFrameClock, vclk);
+                        if (fpsStableCounter_ > 4)
+                        {
+                            // aveFrameClock = (aveFrameClock * 1023 + vclk) >> 10;
+                            aveFrameClock = (aveFrameClock * 255 + vclk) >> 8;
+                            //  2^32 / (125000000/60) = 2062
+                            curFPS100_ = 25 * CPU_CLOCK / (aveFrameClock >> 2);
+                        }
+                        else
+                        {
+                            aveFrameClock = vclk;
+                            ++fpsStableCounter_;
+                        }
+
+                        accumVClock_ = 0;
+                        fpsUpdateCounter_ = 0;
+                    }
+                }
+                prevVClock_ = clk;
+            }
         }
 
         if (curInterval_ == flipDelay_)
         {
             ++counter_;
-            PadManager::instance().setVSyncCount(counter_);
+            // PadManager::instance().setVSyncCount(counter_);
         }
 
         prevLv_ = pl;
+    }
+
+    std::array<char, 6> getFPSString() const
+    {
+        int fps100 = getFPS100();
+        std::array<char, 6> buf;
+        buf[5] = 0;
+        if (fps100 == 0)
+        {
+            buf = {'-', '-', '.', '-', '-', 0};
+            return buf;
+        }
+
+        auto d0 = hw_divider_divmod_u32(fps100, 10);
+        buf[4] = '0' + to_remainder_u32(d0);
+
+        auto d1 = hw_divider_divmod_u32(to_quotient_u32(d0), 10);
+        buf[3] = '0' + to_remainder_u32(d1);
+
+        buf[2] = '.';
+
+        auto d2 = hw_divider_divmod_u32(to_quotient_u32(d1), 10);
+        buf[1] = '0' + to_remainder_u32(d2);
+
+        auto d3 = hw_divider_divmod_u32(to_quotient_u32(d2), 10);
+        buf[0] = '0' + to_remainder_u32(d3);
+        return buf;
     }
 };
 
@@ -230,7 +306,12 @@ void __isr __not_in_flash_func(irqHandler)()
     adcDMADBID_ ^= 1;
     startADCTransfer(adcDMADBID_);
 
+    hw_divider_state_t divState;
+    hw_divider_save_state(&divState);
+
     vsyncDetector_.update(p, ADC_BUFFER_SIZE);
+
+    hw_divider_restore_state(&divState);
 }
 
 void startADC()
@@ -273,6 +354,485 @@ bool __no_inline_not_in_flash_func(getBootButton)()
 
 void updateMIDIState();
 
+namespace
+{
+    TextScreen textScreen_;
+    Menu menu_{&textScreen_};
+
+    AppConfig appConfig_;
+}
+
+// void setLCDContrast()
+// {
+//     if (HAS_LCD)
+//     {
+//         LCD::instance().waitForNonBlocking();
+//         LCD::instance().setContrast(appConfig_.LCDContrast);
+//     }
+// }
+
+// void applyAppConfig()
+// {
+//     setLCDContrast();
+// }
+
+void setRapidPhaseMask()
+{
+    uint32_t m = 0;
+    int b = 1 << static_cast<int>(PadStateButton::A);
+    for (int v : appConfig_.rapidPhase)
+    {
+        if (v)
+        {
+            m |= b;
+        }
+        b <<= 1;
+    }
+    DPRINT(("setRapidPhaseMask %08x\n", m));
+    PadManager::instance().setRapidFirePhaseMask(m);
+}
+
+void setRapidSettings()
+{
+    int i = 0;
+    for (auto &rs : appConfig_.rapidSettings)
+    {
+        PadManager::instance().setNonMappedRapidFireMask(i, rs.mask);
+        PadManager::instance().setRapidFireDiv(i, rs.div);
+        ++i;
+    }
+}
+
+void saveRapidSettings()
+{
+    int i = 0;
+    for (auto &rs : appConfig_.rapidSettings)
+    {
+        rs.mask = PadManager::instance().getNonMappedRapidFireMask(i);
+        rs.div = PadManager::instance().getRapidFireDiv(i);
+        ++i;
+    }
+}
+
+void resetRapidSettings()
+{
+    appConfig_.resetRapidPhase();
+
+    int i = 0;
+    for (auto &rs : appConfig_.rapidSettings)
+    {
+        rs.mask = 0;
+        rs.div = 1;
+        PadManager::instance().setNonMappedRapidFireMask(i, rs.mask);
+        PadManager::instance().setRapidFireDiv(i, rs.div);
+        ++i;
+    }
+}
+
+void resetConfigs()
+{
+    appConfig_ = AppConfig();
+    PadManager::instance().resetConfig();
+
+    setRapidPhaseMask();
+    setRapidSettings();
+}
+
+void load()
+{
+    Deserializer s;
+    if (!s)
+    {
+        DPRINT(("no saved data\n"));
+        return;
+    }
+
+    if (!appConfig_.deserialize(s))
+    {
+        DPRINT(("AppConfig load failed\n"));
+    }
+
+    PadManager::instance().deserialize(s);
+
+    //
+    setRapidPhaseMask();
+    setRapidSettings();
+
+    DPRINT(("Loaded.\n"));
+}
+
+void save()
+{
+    Serializer s(65536, 512);
+
+    appConfig_.serialize(s);
+    PadManager::instance().serialize(s);
+
+    s.flash();
+    DPRINT(("Saved.\n"));
+}
+
+char getButtonName(PadStateButton b)
+{
+    switch (b)
+    {
+    case PadStateButton::LEFT:
+        return '\10';
+    case PadStateButton::RIGHT:
+        return '\7';
+    case PadStateButton::UP:
+        return '\5';
+    case PadStateButton::DOWN:
+        return '\6';
+    case PadStateButton::A:
+        return 'A';
+    case PadStateButton::B:
+        return 'B';
+    case PadStateButton::C:
+        return 'C';
+    case PadStateButton::D:
+        return 'D';
+    case PadStateButton::E:
+        return 'E';
+    case PadStateButton::F:
+        return 'F';
+    case PadStateButton::COIN:
+        return 'c';
+    case PadStateButton::START:
+        return 'S';
+    case PadStateButton::CMD:
+        return 'x';
+    default:
+        return '?';
+    }
+}
+
+const char *getButtonConfigText(PadStateButton b)
+{
+    switch (b)
+    {
+    case PadStateButton::LEFT:
+        return "Push \10  ";
+    case PadStateButton::RIGHT:
+        return "Push \7  ";
+    case PadStateButton::UP:
+        return "Push \5  ";
+    case PadStateButton::DOWN:
+        return "Push \6  ";
+    case PadStateButton::A:
+        return "Push A  ";
+    case PadStateButton::B:
+        return "Push B  ";
+    case PadStateButton::C:
+        return "Push C  ";
+    case PadStateButton::D:
+        return "Push D  ";
+    case PadStateButton::E:
+        return "Push E  ";
+    case PadStateButton::F:
+        return "Push F  ";
+    case PadStateButton::COIN:
+        return "PushCOIN";
+    case PadStateButton::START:
+        return "PshSTART";
+    case PadStateButton::CMD:
+        return "Push CMD";
+    default:
+        return "";
+    }
+}
+
+void initMenu()
+{
+    menu_.setBlinkInterval(CPU_CLOCK / 2);
+
+    menu_.append(
+        "BtnCfg", "LngPress", [](Menu &m)
+        { 
+            textScreen_.clearAll();
+            textScreen_.printMain(0, 0, "BtCongig");
+            PadManager::instance().enterConfigMode(); },
+        true /* config button */);
+
+    PadManager::instance().setOnExitConfigFunc(
+        []
+        {
+            DPRINT(("exit button config\n"));
+            textScreen_.clearAll();
+            menu_.forceClose();
+            menu_.refresh();
+        });
+
+    static const char *buttonDispModeText[] = {"Input", "Rapid", "None"};
+    static const char *onOffText[] = {"Off", "On"};
+    static const char *inOutText[] = {"In", "Out"};
+    static const char *initPowerModeText[] = {"InitOff", "InitOn"};
+    static const char *rapitModeText[] = {"Softw", "Synchro"};
+
+    menu_.append("PowMode", &appConfig_.initPowerOn,
+                 initPowerModeText, std::size(initPowerModeText));
+    menu_.append("DispFPS", &appConfig_.dispFPS, onOffText, 2);
+    menu_.append("BtnDisp", &appConfig_.buttonDispMode,
+                 buttonDispModeText, std::size(buttonDispModeText));
+    menu_.append("BackLit", &appConfig_.backLight, onOffText, 2);
+    // menu_.append("LCD Ctr", &appConfig_.LCDContrast, {0, 63}, "%2d",
+    //              [](Menu &)
+    //              { setLCDContrast(); });
+    menu_.append("RapidMd", &appConfig_.rapidModeSynchro, rapitModeText, std::size(rapitModeText));
+    menu_.append("SwRapid", &appConfig_.softwareRapidSpeed, {1, 30}, "%2dShot\3");
+
+    auto onRapidPhaseChanged = [](Menu &m)
+    {
+        setRapidPhaseMask();
+    };
+
+    menu_.append("Phase A", &appConfig_.rapidPhase[0], inOutText, 2, onRapidPhaseChanged);
+    menu_.append("Phase B", &appConfig_.rapidPhase[1], inOutText, 2, onRapidPhaseChanged);
+    menu_.append("Phase C", &appConfig_.rapidPhase[2], inOutText, 2, onRapidPhaseChanged);
+    menu_.append("Phase D", &appConfig_.rapidPhase[3], inOutText, 2, onRapidPhaseChanged);
+    menu_.append("Phase E", &appConfig_.rapidPhase[4], inOutText, 2, onRapidPhaseChanged);
+    menu_.append("Phase F", &appConfig_.rapidPhase[5], inOutText, 2, onRapidPhaseChanged);
+
+    menu_.append(
+        "InitRpd", "Press A", [](Menu &m)
+        {
+            DPRINT(("reset rapid state\n"));
+            textScreen_.printInfo(0, 1, " Init'd ");
+            textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
+            resetRapidSettings(); });
+
+    menu_.append(
+        "SaveRpd", "Press A", [](Menu &m)
+        {
+            DPRINT(("save rapid state\n"));
+            textScreen_.printInfo(0, 1, "  Saved ");
+            textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
+            saveRapidSettings(); });
+
+    menu_.append("InitAll", "PressA+S", [](Menu &m)
+                 {
+                     auto pad = m.getPad();
+                     if (pad.first & (1 << static_cast<int>(PadStateButton::START)))
+                     {
+                         DPRINT(("init all\n"));
+                         textScreen_.printInfo(0, 1, " Init'd ");
+                         textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
+                         resetConfigs();
+                     } });
+
+    menu_.setOpenCloseFunc(
+        [](bool open)
+        {
+            textScreen_.clearLayer(TextScreen::Layer::BASE);
+            if (open)
+            {
+                textScreen_.setFont(3, get_sFont());
+                textScreen_.setFont(5, getUpArrowFont());
+            }
+            else
+            {
+                textScreen_.setFont(0, getPlayerFont(0));
+                textScreen_.setFont(1, getPlayerFont(1));
+                textScreen_.setFont(2, get1_NFont(1));
+                textScreen_.setFont(3, get1_NFont(1));
+                textScreen_.setFont(5, getUpArrowFont());
+                textScreen_.print(0, 0, TextScreen::Layer::BASE, "\240\2");
+                textScreen_.print(0, 1, TextScreen::Layer::BASE, "\1\3");
+
+                if (menu_.isChanged())
+                {
+                    save();
+                    menu_.clearChanged();
+                }
+            }
+        });
+
+    auto &padManager = PadManager::instance();
+    padManager.setEnableModelChangeByButton(false);
+    padManager.setEnableLED(false);
+
+    padManager.setPrintButtonFunc([](PadStateButton b)
+                                  { textScreen_.printMain(0, 1,
+                                                          getButtonConfigText(b)); });
+}
+
+void updateDisplay(uint32_t dclk)
+{
+    if (menu_.isOpened())
+    {
+        return;
+    }
+
+    static uint32_t clkct = 0;
+    clkct += dclk;
+    constexpr uint32_t interval = CPU_CLOCK / 4;
+    static bool blink = false;
+    if (clkct > interval)
+    {
+        clkct -= interval;
+        blink ^= true;
+    }
+
+    auto buttonDispMode = appConfig_.buttonDispMode;
+
+    auto &padManager = PadManager::instance();
+    for (int port = 0; port < 2; ++port)
+    {
+        int rapidDiv = padManager.getRapidFireDiv(port);
+        textScreen_.setFont(2 + port, get1_NFont(rapidDiv));
+
+        switch (appConfig_.getButtonDispMode())
+        {
+        case AppConfig::ButtonDispMode::INPUT_BUTTONS:
+        {
+            auto rbt = padManager.getNonRapidButtonsEachRapidPhase(port);
+
+            char buf[7];
+            int ofs = 0;
+            for (int i = 0; i < static_cast<int>(PadStateButton::MAX) && ofs < 6; ++i)
+            {
+                bool f0 = (rbt[0] & (1u << i));
+                bool f1 = (rbt[1] & (1u << i));
+                if (f0 || f1)
+                {
+                    bool f = blink ? f0 : f1;
+                    buf[ofs++] = f ? getButtonName(static_cast<PadStateButton>(i)) : ' ';
+                }
+            }
+            buf[ofs] = 0;
+            textScreen_.printMain(2, port, buf);
+            textScreen_.fill(2 + ofs, port, TextScreen::Layer::MAIN, 6 - ofs, 0);
+        }
+        break;
+
+        case AppConfig::ButtonDispMode::RAPID_BUTTONS:
+        {
+            auto mask = padManager.getRapidFireMask(port);
+
+            char buf[7];
+            int ofs = 0;
+            for (int i = 0; i < static_cast<int>(PadStateButton::MAX) && ofs < 6; ++i)
+            {
+                if (mask & (1u << i))
+                {
+                    buf[ofs++] = getButtonName(static_cast<PadStateButton>(i));
+                }
+            }
+            buf[ofs] = 0;
+            textScreen_.printMain(2, port, buf);
+            textScreen_.fill(2 + ofs, port, TextScreen::Layer::MAIN, 6 - ofs, 0);
+        }
+        break;
+
+        default:
+            break;
+        }
+    }
+
+    if (appConfig_.dispFPS)
+    {
+        auto fpsStr = vsyncDetector_.getFPSString();
+#if 0
+        int d0 = fpsStr[1] - '0';
+        if (d0 >= 0 && d0 <= 9)
+        {
+            fpsStr[1] = '\4';
+            textScreen_.setFont(4, getNumberWithDotFont(d0));
+        }
+#endif
+        textScreen_.print(3, 1, TextScreen::Layer::BASE, fpsStr.data());
+    }
+}
+
+class SwRapidFire
+{
+    uint32_t counter_ = 0;
+
+    int clk_ = 0;
+
+public:
+    uint32_t getCounter() const { return counter_; }
+
+    void update(int dclk, int ctPerSec)
+    {
+        clk_ += dclk;
+        int interval = CPU_CLOCK / (ctPerSec << 1);
+        if (clk_ > interval)
+        {
+            clk_ -= interval;
+            ++counter_;
+        }
+    }
+};
+
+bool powerOn()
+{
+    // check Power good
+    gpio_init(PDPG_PIN);
+    gpio_set_dir(PDPG_PIN, GPIO_IN);
+    gpio_set_pulls(PDPG_PIN, true, false);
+    sleep_ms(100);
+
+    bool powerGood = !gpio_get(PDPG_PIN);
+
+    gpio_set_pulls(PDPG_PIN, false, false);
+    gpio_set_function(PDPG_PIN, GPIO_FUNC_UART);
+    sleep_ms(100);
+
+    if (powerGood)
+    {
+        gpio_put(POWER_EN_PIN, true);
+        printf("power on\n");
+
+        PadManager::instance().enterNormalMode();
+        vsyncDetector_.reset();
+        vsyncDetector_.setEnableFPSCount(true);
+
+        // textScreen_.printInfo(0, 0, "Power On");
+        // textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
+
+        if (HAS_LCD)
+        {
+            menu_.refresh();
+            setRapidPhaseMask();
+            setRapidSettings();
+        }
+    }
+    else
+    {
+        printf("power NOT good\n");
+        if (HAS_LCD)
+        {
+            textScreen_.printInfo(0, 0, "POWER NG");
+            textScreen_.printInfo(0, 1, "Check PD");
+            textScreen_.setInfoLayerClearTimer(CPU_CLOCK * 2);
+        }
+
+        return false;
+    }
+
+    return true;
+}
+
+void powerOff()
+{
+    if (HAS_POWER_BUTTON)
+    {
+        gpio_put(POWER_EN_PIN, false);
+    }
+    vsyncDetector_.setEnableFPSCount(false);
+
+    printf("power off\n");
+    if (HAS_LCD)
+    {
+        menu_.forceClose();
+
+        textScreen_.clearAll();
+        textScreen_.printInfo(0, 0, "PowerOff");
+        textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
+    }
+}
+
 ////////////////////////
 ////////////////////////
 int main()
@@ -280,7 +840,16 @@ int main()
     stdio_init_all();
 
     util::initSysTick();
+
     initLED();
+    setLED(false);
+
+    if (HAS_POWER_BUTTON)
+    {
+        gpio_init(POWER_EN_PIN);
+        gpio_set_dir(POWER_EN_PIN, GPIO_OUT);
+        gpio_put(POWER_EN_PIN, 0);
+    }
 
 #ifdef RASPBERRYPI_PICO_W
     if (cyw43_arch_init())
@@ -290,10 +859,9 @@ int main()
     }
 #endif
 
-    PadManager::instance().load();
+    load();
 
-    printf("start.\n");
-    //    setLED(true);
+    DPRINT(("start.\n"));
 
     tusb_init();
 
@@ -320,21 +888,60 @@ int main()
         }
     }
 
-    initADC();
+    auto *i2cIF = i2c1;
 
+    // I2C
+    if (HAS_LCD)
+    {
+        i2c_init(i2cIF, 400000);
+        // i2c_init(i2cIF, 4000);
+        gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
+        gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
+
+        auto &lcd = LCD::instance();
+        DPRINT(("I2C init...\n"));
+        lcd.init(i2cIF);
+        DPRINT(("I2C init done.\n"));
+
+        textScreen_.clearAll();
+        textScreen_.printInfo(0, 0, BOARD_NAME);
+        textScreen_.printInfo(0, 1, BOARD_VERSION);
+        textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
+
+        initMenu();
+
+        textScreen_.clearLayer(TextScreen::Layer::BASE);
+    }
+
+    // ADC
+    initADC();
     startADC();
 
-    //    watchdog_enable(5000, true);
+    watchdog_enable(5000, true);
 
     bool prevBtCnf = false;
+    bool prevBtCnfMiddle = false;
     bool prevBtCnfLong = false;
     auto prevCt = util::getSysTickCounter24();
     uint32_t ct32 = 0;
     uint32_t ctCnfPush = 0;
 
+    auto &padManager = PadManager::instance();
+    bool power = !HAS_POWER_BUTTON;
+    padManager.setNormalModeLED(HAS_POWER_BUTTON);
+    padManager.setOnSaveFunc(save);
+
+    SwRapidFire swRapidFire;
+
+    if (appConfig_.initPowerOn && !power)
+    {
+        sleep_ms(500); // PDが確実に安定するくらいまでまつ
+        power = powerOn();
+    }
+
     while (1)
     {
-        //        watchdog_update();
+        watchdog_update();
 
         auto cct = util::getSysTickCounter24();
         auto cdct = (prevCt - cct) & 0xffffff;
@@ -348,49 +955,94 @@ int main()
         {
             ctCnfPush = ct32;
         }
-        constexpr uint32_t CLOCK = 125000000;
-        constexpr uint32_t CT_LONGPUSH = CLOCK * 2; // 2s
+        constexpr uint32_t CT_MIDDLEPUSH = CPU_CLOCK * 1; // 1s
+        constexpr uint32_t CT_LONGPUSH = CPU_CLOCK * 3;   // 3s
+
+        bool btCnfMiddle = btCnf && (ct32 - ctCnfPush > CT_MIDDLEPUSH);
+        bool btCnfMiddleTrigger = !prevBtCnfMiddle && btCnfMiddle;
+
         bool btCnfLong = btCnf && (ct32 - ctCnfPush > CT_LONGPUSH);
         bool btCnfLongTrigger = !prevBtCnfLong && btCnfLong;
 
-        PadManager::instance().update(btCnf, btCnfRelease, btCnfLongTrigger);
-
-        prevBtCnf = btCnf;
-        prevBtCnfLong = btCnfLong;
-
-        for (int port = 0; port < 2; ++port)
+        if (!power && HAS_POWER_BUTTON)
         {
-            auto st = PadManager::instance().getButtons(port);
-            if (REVERSE_STATE)
+            if ((prevBtCnf ^ btCnf) && !btCnf && !prevBtCnfLong)
             {
-                st = ~st;
+                power = powerOn();
             }
+        }
+        else
+        {
+            if (btCnfLongTrigger && HAS_POWER_BUTTON)
+            {
+                powerOff();
+                power = false;
+            }
+            else
+            {
+                if (HAS_LCD && !padManager.isConfigMode())
+                {
+                    auto b0 = padManager.getNonRapidButtons(0);
+                    auto b1 = padManager.getNonRapidButtons(1);
+                    menu_.update(cdct,
+                                 b0 | b1,
+                                 btCnfRelease,
+                                 btCnfMiddleTrigger);
+                }
 
-            auto &map = padPortMap_[port];
-            for (auto &m : map)
-            {
-                gpio_put(static_cast<int>(m.gpio), st & (1u << static_cast<int>(m.padState)));
+                if (appConfig_.rapidModeSynchro)
+                {
+                    padManager.setVSyncCount(vsyncDetector_.getCounter());
+                }
+                else
+                {
+                    swRapidFire.update(cdct, appConfig_.softwareRapidSpeed);
+                    padManager.setVSyncCount(swRapidFire.getCounter());
+                }
+
+                padManager.update(btCnf, btCnfRelease, btCnfMiddleTrigger);
+
+                for (int port = 0; port < 2; ++port)
+                {
+                    auto st = padManager.getButtons(port);
+                    if (REVERSE_STATE)
+                    {
+                        st = ~st;
+                    }
+
+                    auto &map = padPortMap_[port];
+                    for (auto &m : map)
+                    {
+                        gpio_put(static_cast<int>(m.gpio),
+                                 st & (1u << static_cast<int>(m.padState)));
+                    }
+                }
+
+                if (HAS_LCD && !padManager.isConfigMode())
+                {
+                    updateDisplay(cdct);
+                    menu_.render();
+                }
             }
+        }
+
+        if (HAS_LCD)
+        {
+            textScreen_.update(cdct);
+
+            bool info = textScreen_.isInfoActive();
+            bool led = (power || info) && appConfig_.backLight;
+            setLED(led);
+
+            LCD::instance().setDisplayOnOff(info || power);
         }
 
         tuh_task();
         updateMIDIState();
 
-#if 0
-        static int ct = 0;
-        if (++ct > 100000)
-        {
-            ct = 0;
-            // printf("ct%d, int %d, r%d,%d\n",
-            //        vsyncDetector_.getVSyncCounter(),
-            //        vsyncDetector_.getInterval(),
-            //        vsyncDetector_.getMin(),
-            //        vsyncDetector_.getMax());
-            static bool f = false;
-            f ^= true;
-            setLED(f);
-        }
-#endif
+        prevBtCnf = btCnf;
+        prevBtCnfMiddle = btCnfMiddle;
+        prevBtCnfLong = btCnfLong;
     }
     return 0;
 }

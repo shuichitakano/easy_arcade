@@ -7,6 +7,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <algorithm>
 
 void PadState::update()
 {
@@ -30,20 +31,36 @@ void PadState::update()
 
         if (mappedTrigger & (1u << static_cast<int>(PadStateButton::UP)))
         {
-            rapidFireDiv_ = std::max(0, rapidFireDiv_ - 1);
+            rapidFireDiv_ = std::max(1, rapidFireDiv_ - 1);
             printf("rapid div: %d\n", rapidFireDiv_);
         }
         if (mappedTrigger & (1u << static_cast<int>(PadStateButton::DOWN)))
         {
-            rapidFireDiv_ = std::min(3, rapidFireDiv_ + 1);
+            rapidFireDiv_ = std::min(4, rapidFireDiv_ + 1);
             printf("rapid div: %d\n", rapidFireDiv_);
         }
     }
+
+    // それぞれのフェーズの連射ボタン押下状態を更新
+    auto base = ~rapidFireMask_;
+    auto maskA = base | (rapidFireMask_ & rapidFirePhase_);
+    auto maskB = base | (rapidFireMask_ & (~rapidFirePhase_));
+    uint32_t mmA = 0, mmB = 0;
+    uint32_t mm = 0;
+    for (int i = 0; i < nMapButtons_; ++i)
+    {
+        mmA |= (maskA & (1u << i)) ? buttonMap_[i] : 0;
+        mmB |= (maskB & (1u << i)) ? buttonMap_[i] : 0;
+        mm |= rapidFireMask_ & (1u << i) ? buttonMap0_[i] : 0;
+    }
+    mappedButtonsRapidA_ = mmA;
+    mappedButtonsRapidB_ = mmB;
+    mappedRapidFireMask_ = mm;
 }
 
 uint32_t PadState::getButtons() const
 {
-    bool rapidFire = (vsyncCount_ >> rapidFireDiv_) & 1;
+    bool rapidFire = (vsyncCount_ / std::max(1, rapidFireDiv_)) & 1;
     uint32_t rapidMask = rapidFire ? 0xffffffff : 0;
 
     auto maskA = rapidMask & rapidFirePhase_;
@@ -54,7 +71,7 @@ uint32_t PadState::getButtons() const
     uint32_t r = 0;
     for (int i = 0; i < nMapButtons_; ++i)
     {
-        r |= (m & 1u << i) ? 0 : buttonMap_[i];
+        r |= (m & (1u << i)) ? 0 : buttonMap_[i];
     }
 
     return r;
@@ -73,23 +90,20 @@ bool PadState::set(const PadTranslator &translator,
         {
             uint32_t mapped = 0;
             uint32_t unmapped = 0;
-            uint32_t phase = 0;
             auto n = std::min<int>(MAX_BUTTONS, cfg->getButtonCount());
             for (auto i = 0u; i < n; ++i)
             {
                 bool f = cfg->convertButton(i, buttons, nButtons, analogs, nAnalogs, hat);
                 const auto &unit = cfg->getButtonUnit(i);
-                uint32_t m = f ? 1u << unit.index : 0;
+                uint32_t m0 = 1u << unit.index;
+                uint32_t m = f ? m0 : 0;
                 buttonMap_[i] = m;
+                buttonMap0_[i] = m0;
                 mapped |= m;
                 unmapped |= f ? 1u << i : 0;
-
-                // phase |= unit.subIndex & 1 ? 1u << i : 0;
-                phase |= unit.index & 1 ? 1u << unit.index : 0;
             }
             mappedButtons_ = mapped;
             unmappedButtons_ = unmapped;
-            rapidFirePhase_ = phase;
             nMapButtons_ = n;
         }
         {

@@ -11,7 +11,7 @@ set(PICO_DEOPTIMIZED_DEBUG on)
 # (note this can come from environment, CMake cache etc)
 #set(PICO_SDK_PATH "/Users/shuichi/pico/pico-sdk")
 
-set(PICO_BOARD pico_w CACHE STRING "Board type")
+# set(PICO_BOARD pico_w CACHE STRING "Board type")
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
@@ -38,6 +38,11 @@ add_executable(arcade_play
         third_party/tusb_xinput/xinput_host.c
         usb_app_driver.cpp
         usb_midi.cpp
+        lcd.cpp
+        text_screen.cpp
+        font.cpp
+        menu.cpp
+        app_config.cpp
         )
 
 pico_set_program_name(arcade_play "arcade_play")
@@ -74,6 +79,7 @@ PRIVATE
         hardware_adc
 	hardware_dma
         hardware_flash
+        hardware_i2c
 
         usb_midi_host
         )

@@ -4,6 +4,7 @@
  */
 
 #include <hardware/gpio.h>
+#include "board.h"
 
 #ifdef RASPBERRYPI_PICO_W
 #include "pico/cyw43_arch.h"
@@ -27,6 +28,6 @@ inline void initLED()
 
 inline void setLED(bool f)
 {
-    gpio_put(PICO_DEFAULT_LED_PIN, f);
+    gpio_put(PICO_DEFAULT_LED_PIN, f ^ LED_ACTIVE_LOW);
 }
 #endif

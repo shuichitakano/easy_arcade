@@ -117,6 +117,8 @@ public:
     void serialize(Serializer &s) const;
     void deserialize(Deserializer &s);
 
+    void reset();
+
 protected:
     PadConfig *_find(int vid, int pid);
 

@@ -263,6 +263,11 @@ PadTranslator::PadTranslator()
     */
 }
 
+void PadTranslator::reset()
+{
+    configs_.clear();
+}
+
 PadConfig *PadTranslator::_find(int vid, int pid)
 {
     std::pair<int, int> id{vid, pid};
