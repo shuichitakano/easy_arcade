@@ -8,7 +8,6 @@
 #include <cstdio>
 #include <algorithm>
 #include "led.h"
-#include "serializer.h"
 #include "debug.h"
 
 namespace
@@ -82,9 +81,43 @@ void PadManager::update(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLon
     }
 }
 
-namespace
+void PadManager::enterNormalMode()
 {
-    void blinkLED(bool reverse, int n)
+    mode_ = Mode::NORMAL;
+    printf("to normal mode\n");
+    setLED(normalModeLED_);
+}
+
+void PadManager::enterConfigMode()
+{
+    // enter config mode
+    configMode_ = {};
+    configMode_.curButtonSet_.clear();
+
+    for (int i = 0; i < N_PORTS; ++i)
+    {
+        configMode_.analogNeutral_[i] = latestPadData_[i].analogs;
+        // ボタン押されないと入力が来ないタイプのコントローラーがあるが、
+        // 差し込み直後にコンフィグモードに入った場合はニュートラルを取得できない。
+        // それは妥協する。
+    }
+
+    mode_ = Mode::CONFIG;
+    printf("enter config mode\n");
+
+    blinkLED(false, 2);
+    setLED(true);
+
+    printButtonMessage(configMode_.curButton_);
+    if (printButtonFunc_)
+    {
+        printButtonFunc_(configMode_.curButton_);
+    }
+}
+
+void PadManager::blinkLED(bool reverse, int n)
+{
+    if (enableLED_)
     {
         for (int i = 0; i < n; ++i)
         {
@@ -98,27 +131,9 @@ namespace
 
 void PadManager::updateNormalMode(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong)
 {
-    if (cnfButtonLong)
+    if (cnfButtonLong && enableModeChangeByButton_)
     {
-        // enter config mode
-        configMode_ = {};
-        configMode_.curButtonSet_.clear();
-
-        for (int i = 0; i < N_PORTS; ++i)
-        {
-            configMode_.analogNeutral_[i] = latestPadData_[i].analogs;
-            // ボタン押されないと入力が来ないタイプのコントローラーがあるが、
-            // 差し込み直後にコンフィグモードに入った場合はニュートラルを取得できない。
-            // それは妥協する。
-        }
-
-        mode_ = Mode::CONFIG;
-        printf("enter config mode\n");
-
-        blinkLED(false, 2);
-        setLED(true);
-
-        printButtonMessage(configMode_.curButton_);
+        enterConfigMode();
     }
 }
 
@@ -275,6 +290,10 @@ void PadManager::nextButtonConfig()
     blinkLED(true, blinkCt);
 
     printButtonMessage(configMode_.curButton_);
+    if (printButtonFunc_)
+    {
+        printButtonFunc_(configMode_.curButton_);
+    }
 }
 
 void PadManager::saveConfigAndExit()
@@ -334,15 +353,19 @@ void PadManager::saveConfigAndExit()
         {
             printf("save config\n");
             translator_.append({configMode_.vid_, configMode_.pid_, units, {}});
-            save();
+            if (onSaveFunc_)
+            {
+                onSaveFunc_();
+            }
         }
     }
 
-    printf("to normal mode\n");
     blinkLED(true, 3);
-    setLED(false);
-
-    mode_ = Mode::NORMAL;
+    enterNormalMode();
+    if (onExitConfigFunc_)
+    {
+        onExitConfigFunc_();
+    }
 }
 
 void PadManager::setVSyncCount(int count)
@@ -371,22 +394,102 @@ PadManager::getButtons(int port) const
     }
 }
 
-void PadManager::load()
+uint32_t
+PadManager::getNonRapidButtons(int port) const
 {
-    Deserializer s;
-    if (!s)
+    if (port < 0 || port >= N_OUTPUT_PORTS)
     {
-        DPRINT(("no saved data\n"));
+        return {};
+    }
+    if (port == 0)
+    {
+        auto s0 = padStates_[static_cast<int>(StateKind::PORT0)].getNonRapidButtons();
+        auto s1 = padStates_[static_cast<int>(StateKind::MIDI)].getNonRapidButtons();
+        return s0 | s1;
+    }
+    else
+    {
+        return padStates_[port].getNonRapidButtons();
+    }
+}
+
+std::array<uint32_t, 2>
+PadManager::getNonRapidButtonsEachRapidPhase(int port) const
+{
+    if (port < 0 || port >= N_OUTPUT_PORTS)
+    {
+        return {};
+    }
+    return padStates_[port].getNonRapidButtonsEachRapidPhase();
+}
+
+uint32_t
+PadManager::getRapidFireMask(int port) const
+{
+    if (port < 0 || port >= N_OUTPUT_PORTS)
+    {
+        return 0;
+    }
+    return padStates_[port].getRapidFireMask();
+}
+
+uint32_t
+PadManager::getNonMappedRapidFireMask(int port) const
+{
+    if (port < 0 || port >= N_OUTPUT_PORTS)
+    {
+        return 0;
+    }
+    return padStates_[port].getNonMappedRapidFireMask();
+}
+
+void PadManager::setNonMappedRapidFireMask(int port, uint32_t v)
+{
+    if (port < 0 || port >= N_OUTPUT_PORTS)
+    {
         return;
     }
+    padStates_[port].setNonMappedRapidFireMask(v);
+}
 
+int PadManager::getRapidFireDiv(int port) const
+{
+    if (port < 0 || port >= N_OUTPUT_PORTS)
+    {
+        return 0;
+    }
+    return padStates_[port].getRapidFireDiv();
+}
+
+void PadManager::setRapidFireDiv(int port, int v)
+{
+    if (port < 0 || port >= N_OUTPUT_PORTS)
+    {
+        return;
+    }
+    padStates_[port].setRapidFireDiv(v);
+}
+
+void PadManager::setRapidFirePhaseMask(uint32_t v)
+{
+    padStates_[0].setRapidFirePhaseMask(v);
+    padStates_[0].setRapidFirePhaseMask(v);
+}
+
+void PadManager::serialize(Serializer &s) const
+{
+    translator_.serialize(s);
+}
+
+void PadManager::deserialize(Deserializer &s)
+{
     translator_.deserialize(s);
 }
 
-void PadManager::save()
+void PadManager::setLED(bool on) const
 {
-    Serializer s(65536, 512);
-    translator_.serialize(s);
-
-    s.flash();
+    if (enableLED_)
+    {
+        ::setLED(on);
+    }
 }

@@ -14,10 +14,10 @@ struct SerializeHeader
 {
     inline static constexpr uint32_t
         MAGIC = 'E' | ('A' << 8) | ('S' << 16) | ('D' << 24);
-    inline static constexpr uint32_t CUR_VER = 0;
-    inline static constexpr uint32_t MIN_ENABLED_VER = 0;
+    inline static constexpr uint32_t CUR_VER = 1;
+    inline static constexpr uint32_t MIN_ENABLED_VER = 1;
     uint32_t magic = MAGIC;
-    uint32_t version = 0;
+    uint32_t version = CUR_VER;
     uint32_t size = 0;
     uint32_t reserved[14]{};
 };

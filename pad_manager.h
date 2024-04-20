@@ -12,6 +12,8 @@
 #include <array>
 #include "pad_translator.h"
 #include "pad_state.h"
+#include "serializer.h"
+#include <functional>
 
 inline static constexpr size_t N_PAD_STATE_BUTTONS = static_cast<size_t>(PadStateButton::MAX);
 
@@ -53,6 +55,10 @@ public:
         }
     };
 
+    using PrintButtonFunc = std::function<void(PadStateButton)>;
+    using onExitConfigFunc = std::function<void()>;
+    using onSaveFunc = std::function<void()>;
+
 public:
     PadManager();
 
@@ -71,10 +77,34 @@ public:
     }
 
     uint32_t getButtons(int port) const;
+    uint32_t getNonRapidButtons(int port) const;
+    std::array<uint32_t, 2> getNonRapidButtonsEachRapidPhase(int port) const;
+    uint32_t getRapidFireMask(int port) const;
+    uint32_t getNonMappedRapidFireMask(int port) const;
+    void setNonMappedRapidFireMask(int port, uint32_t v);
+    int getRapidFireDiv(int port) const;
+    void setRapidFireDiv(int port, int v);
+    void setRapidFirePhaseMask(uint32_t v);
+
     void setVSyncCount(int count);
 
-    void load();
-    void save();
+    void serialize(Serializer &s) const;
+    void deserialize(Deserializer &s);
+
+    void enterNormalMode();
+    void enterConfigMode();
+    void setNormalModeLED(bool f) { normalModeLED_ = f; }
+
+    bool isConfigMode() const { return mode_ == Mode::CONFIG; }
+
+    void setEnableModelChangeByButton(bool f) { enableModeChangeByButton_ = f; }
+    void setEnableLED(bool f) { enableLED_ = f; }
+
+    void setPrintButtonFunc(PrintButtonFunc f) { printButtonFunc_ = f; }
+    void setOnExitConfigFunc(onExitConfigFunc f) { onExitConfigFunc_ = f; }
+    void setOnSaveFunc(onSaveFunc f) { onSaveFunc_ = f; }
+
+    void resetConfig() { translator_.reset(); }
 
 protected:
     void updateNormalMode(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
@@ -85,6 +115,9 @@ protected:
 
     void nextButtonConfig();
     void saveConfigAndExit();
+
+    void blinkLED(bool reverse, int n);
+    void setLED(bool on) const;
 
 private:
     enum class Mode
@@ -151,5 +184,14 @@ private:
     Mode mode_{};
     ConfigMode configMode_;
 
+    bool enableModeChangeByButton_ = true;
+    bool enableLED_ = true;
+
+    bool normalModeLED_ = true;
+
     PadTranslator translator_;
+
+    PrintButtonFunc printButtonFunc_;
+    onExitConfigFunc onExitConfigFunc_;
+    onSaveFunc onSaveFunc_;
 };
