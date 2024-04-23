@@ -784,6 +784,7 @@ bool powerOn()
         gpio_put(POWER_EN_PIN, true);
         printf("power on\n");
 
+        PadManager::instance().reset();
         PadManager::instance().enterNormalMode();
         vsyncDetector_.reset();
         vsyncDetector_.setEnableFPSCount(true);
@@ -807,7 +808,6 @@ bool powerOn()
             textScreen_.printInfo(0, 1, "Check PD");
             textScreen_.setInfoLayerClearTimer(CPU_CLOCK * 2);
         }
-
         return false;
     }
 
@@ -973,7 +973,16 @@ int main()
         }
         else
         {
-            if (btCnfLongTrigger && HAS_POWER_BUTTON)
+            auto nrb0 = padManager.getNonRapidButtons(0);
+            auto nrb1 = padManager.getNonRapidButtons(1);
+            auto nrb = nrb0 | nrb1;
+
+            constexpr auto MASK_POWER_OFF = (1u << static_cast<int>(PadStateButton::START)) |
+                                            (1u << static_cast<int>(PadStateButton::COIN)) |
+                                            (1u << static_cast<int>(PadStateButton::CMD));
+            auto btPowOff = (nrb & MASK_POWER_OFF) == MASK_POWER_OFF;
+
+            if ((btCnfLongTrigger || btPowOff) && HAS_POWER_BUTTON)
             {
                 powerOff();
                 power = false;
@@ -982,10 +991,8 @@ int main()
             {
                 if (HAS_LCD && !padManager.isConfigMode())
                 {
-                    auto b0 = padManager.getNonRapidButtons(0);
-                    auto b1 = padManager.getNonRapidButtons(1);
                     menu_.update(cdct,
-                                 b0 | b1,
+                                 nrb,
                                  btCnfRelease,
                                  btCnfMiddleTrigger);
                 }

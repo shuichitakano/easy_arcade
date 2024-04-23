@@ -56,6 +56,7 @@ public:
 
     void setRapidFirePhaseMask(uint32_t v) { rapidFirePhase_ = v; }
 
+    void reset();
     void dump() const;
 
 protected:
