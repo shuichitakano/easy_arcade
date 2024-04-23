@@ -9,6 +9,19 @@
 #include <cstdio>
 #include <algorithm>
 
+void PadState::reset()
+{
+    mappedButtons_ = 0;
+    mappedButtonsPrev_ = 0;
+
+    std::fill(std::begin(buttonMap_), std::end(buttonMap_), 0);
+    std::fill(std::begin(buttonMap0_), std::end(buttonMap0_), 0);
+
+    mappedButtonsRapidA_ = 0;
+    mappedButtonsRapidB_ = 0;
+    mappedRapidFireMask_ = 0;
+}
+
 void PadState::update()
 {
     constexpr uint32_t rapidMask = ((1u << static_cast<int>(PadStateButton::UP)) |

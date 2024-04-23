@@ -67,6 +67,12 @@ PadManager::PadManager()
     translator_.setDefaultConfig(std::move(defaultConfig));
 }
 
+void PadManager::reset()
+{
+    padStates_[0].reset();
+    padStates_[1].reset();
+}
+
 void PadManager::update(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong)
 {
     switch (mode_)

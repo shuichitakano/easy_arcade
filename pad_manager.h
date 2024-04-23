@@ -61,6 +61,7 @@ public:
 
 public:
     PadManager();
+    void reset();
 
     void update(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
     void setData(int port, const PadInput &input);
