@@ -60,9 +60,9 @@ JAMMA側の TEST, SERVICE に接続されています。
 POWER/CONFIG ボタンを押すと電源がJAMMA側に供給されます
 
 ### 電源Off
-- 2つの方法があります
-  - POWER/CONFIGボタンを5秒間押し続ける
-  - コントローラーの CMD + START + COIN を押す
+2つの方法があります
+- POWER/CONFIGボタンを5秒間押し続ける
+- コントローラーの CMD + START + COIN を押す
 
 ### メニュー
 
@@ -104,7 +104,7 @@ POWER/CONFIG ボタンを押すと電源がJAMMA側に供給されます
   - 連射の位相(面裏)の設定をします
   - In/Out でOn/Offが逆転しています
 
-- initRpd
+- InitRpd
   - 連射設定を初期化します
 
 - SaveRpd
