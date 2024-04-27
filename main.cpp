@@ -550,7 +550,7 @@ void initMenu()
         "BtnCfg", "LngPress", [](Menu &m)
         { 
             textScreen_.clearAll();
-            textScreen_.printMain(0, 0, "BtCongig");
+            textScreen_.printMain(0, 0, "BtConfig");
             PadManager::instance().enterConfigMode(); },
         true /* config button */);
 
