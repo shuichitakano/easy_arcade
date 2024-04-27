@@ -51,6 +51,19 @@ SFC仕様のRGBケーブルを接続します。
 ### TEST, SERVICE ボタン
 JAMMA側の TEST, SERVICE に接続されています。
 
+### キックハーネスコネクタ
+JAMMAコネクタに出ていない D, E, Fボタンが出力されます。
+
+左から 
+ - GND
+ - 1P D
+ - 1P E
+ - 1P F
+ - 2P D
+ - 2P E
+ - 2P F 
+
+となります。
 
 ## 使い方
 
