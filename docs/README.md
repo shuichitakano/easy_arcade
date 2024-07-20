@@ -1,3 +1,3 @@
 # EASY ARCADE ドキュメント
 
-![EASY ARCADE 2 V1.0](easy_arcade.md)
+[EASY ARCADE 2 取扱説明書](easy_arcade.md)
