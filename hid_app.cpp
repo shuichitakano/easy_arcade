@@ -32,6 +32,7 @@ extern "C"
     {
         hcd_devtree_info_t devInfo;
         hcd_devtree_get_info(dev_addr, &devInfo);
+        // DPRINT((" hub: addr %d, port %d\n", devInfo.hub_addr, devInfo.hub_port));
         return std::min<int>(1, std::max<int>(0, static_cast<int>(devInfo.hub_port) - 1));
     }
     // 邪悪すぎるのでどうにかしたい
@@ -52,10 +53,11 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
 
     util::dumpBytes(desc_report, desc_len);
 
-    const char *protocol_str[] = {"None", "Keyboard", "Mouse"}; // hid_protocol_type_t
+    // const char *protocol_str[] = {"None", "Keyboard", "Mouse"}; // hid_protocol_type_t
     uint8_t const interface_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 
     int port = getHubPort(dev_addr);
+    DPRINT(("port = %d\n", port));
     if (port >= 0 && port < 2)
     {
         auto &hidInfo = hidInfos_[port];

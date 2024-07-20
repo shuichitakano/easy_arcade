@@ -5,6 +5,7 @@
 
 #include "pad_state.h"
 
+#include "debug.h"
 #include <cassert>
 #include <cstdio>
 #include <algorithm>
@@ -39,18 +40,18 @@ void PadState::update()
         if (unmappedTrigger && !(rapidMask & mappedTrigger))
         {
             rapidFireMask_ ^= unmappedTrigger;
-            printf("rapid fire mask = %08x\n", rapidFireMask_);
+            DPRINT(("rapid fire mask = %08x\n", rapidFireMask_));
         }
 
         if (mappedTrigger & (1u << static_cast<int>(PadStateButton::UP)))
         {
             rapidFireDiv_ = std::max(1, rapidFireDiv_ - 1);
-            printf("rapid div: %d\n", rapidFireDiv_);
+            DPRINT(("rapid div: %d\n", rapidFireDiv_));
         }
         if (mappedTrigger & (1u << static_cast<int>(PadStateButton::DOWN)))
         {
             rapidFireDiv_ = std::min(4, rapidFireDiv_ + 1);
-            printf("rapid div: %d\n", rapidFireDiv_);
+            DPRINT(("rapid div: %d\n", rapidFireDiv_));
         }
     }
 
@@ -124,9 +125,17 @@ bool PadState::set(const PadTranslator &translator,
             for (auto i = 0u; i < n; ++i)
             {
                 auto v = cfg->convertAnalog(i, buttons, nButtons, analogs, nAnalogs, hat);
-                analog_[i] = v;
+                analog_.values[i] = v;
             }
         }
+
+#if 0
+        // kari
+        analog_.mask = 7;
+        analog_.values[0] = analogs[0];
+        analog_.values[1] = 255 - analogs[1];
+        analog_.values[2] = 255 - analogs[5];
+#endif
 
         // dump();
         update();
@@ -142,5 +151,6 @@ void PadState::dump() const
     {
         printf("%d", mappedButtons_ & (1 << i) ? 1 : 0);
     }
-    printf(" : %d %d %d %d\n", analog_[0], analog_[1], analog_[2], analog_[3]);
+    printf(" : %d %d %d %d\n",
+           analog_.values[0], analog_.values[1], analog_.values[2], analog_.values[3]);
 }

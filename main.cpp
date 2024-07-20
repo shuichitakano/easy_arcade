@@ -5,6 +5,7 @@
 #include <hardware/i2c.h>
 #include <hardware/adc.h>
 #include <hardware/dma.h>
+#include <hardware/pwm.h>
 #include <hardware/structs/ioqspi.h>
 #include <hardware/divider.h>
 #include <stdint.h>
@@ -18,10 +19,12 @@
 #include "lcd.h"
 #include "text_screen.h"
 #include "menu.h"
+#include "rot_encoder.h"
 #include "app_config.h"
 #include "font.h"
 #include "serializer.h"
 #include "debug.h"
+#include <cmath>
 
 #ifdef RASPBERRYPI_PICO_W
 #include "pico/cyw43_arch.h"
@@ -63,6 +66,10 @@ namespace
             {PadStateButton::COIN, ButtonGPIO::COIN2},
             {PadStateButton::START, ButtonGPIO::START2},
         }};
+
+    const ButtonGPIO analogPortMap_[2][3] = {
+        {ButtonGPIO::D1, ButtonGPIO::E1, ButtonGPIO::F1},
+        {ButtonGPIO::D2, ButtonGPIO::E2, ButtonGPIO::F2}};
 }
 
 class VSyncDetector
@@ -403,6 +410,12 @@ void setRapidSettings()
     }
 }
 
+void setRotEncSettings(int kind)
+{
+    const auto &re = appConfig_.rotEnc[kind];
+    PadManager::instance().setRotEncSetting(kind, re.axis - 1, re.scale * (re.reverse ? -1 : 1));
+}
+
 void saveRapidSettings()
 {
     int i = 0;
@@ -457,6 +470,8 @@ void load()
     //
     setRapidPhaseMask();
     setRapidSettings();
+    setRotEncSettings(0);
+    setRotEncSettings(1);
 
     DPRINT(("Loaded.\n"));
 }
@@ -566,6 +581,7 @@ void initMenu()
     static const char *buttonDispModeText[] = {"Input", "Rapid", "None"};
     static const char *onOffText[] = {"Off", "On"};
     static const char *inOutText[] = {"In", "Out"};
+    static const char *reverseText[] = {"Normal", "Reverse"};
     static const char *initPowerModeText[] = {"InitOff", "InitOn"};
     static const char *rapitModeText[] = {"Softw", "Synchro"};
 
@@ -579,7 +595,10 @@ void initMenu()
     //              [](Menu &)
     //              { setLCDContrast(); });
     menu_.append("RapidMd", &appConfig_.rapidModeSynchro, rapitModeText, std::size(rapitModeText));
-    menu_.append("SwRapid", &appConfig_.softwareRapidSpeed, {1, 30}, "%2dShot\3");
+    menu_.append("SwRapid", &appConfig_.softwareRapidSpeed, {1, 30},
+                 // "%2dShot\3"
+                 [](char *buf, size_t bufSize, int v)
+                 { snprintf(buf, bufSize, "%2dShot\3", v); });
 
     auto onRapidPhaseChanged = [](Menu &m)
     {
@@ -609,16 +628,38 @@ void initMenu()
             textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
             saveRapidSettings(); });
 
+    static const char *rotEncAxisText[] = {"None", "Axis X", "Axis Y", "Axis Z", "Axis RX", "Axis RY", "Axis RZ", "SLIDER", "DIAL", "WHEEL"};
+    menu_.append("RotEncX", &appConfig_.rotEnc[0].axis, rotEncAxisText, std::size(rotEncAxisText), [&](Menu &m)
+                 { setRotEncSettings(0); });
+    menu_.append("RotEncY", &appConfig_.rotEnc[1].axis, rotEncAxisText, std::size(rotEncAxisText), [&](Menu &m)
+                 { setRotEncSettings(1); });
+    menu_.append(
+        "REncX S", &appConfig_.rotEnc[0].scale, {1, 256}, [](char *buf, size_t bufSize, int v)
+        { snprintf(buf, bufSize, "%3d", v); },
+        [&](Menu &m)
+        { setRotEncSettings(0); });
+    menu_.append(
+        "REncY S", &appConfig_.rotEnc[1].scale, {1, 256}, [](char *buf, size_t bufSize, int v)
+        { snprintf(buf, bufSize, "%3d", v); },
+        [&](Menu &m)
+        { setRotEncSettings(1); });
+    menu_.append(
+        "RotEncX", &appConfig_.rotEnc[0].reverse, reverseText, std::size(reverseText), [&](Menu &m)
+        { setRotEncSettings(0); });
+    menu_.append(
+        "RotEncY", &appConfig_.rotEnc[1].reverse, reverseText, std::size(reverseText), [&](Menu &m)
+        { setRotEncSettings(1); });
+
     menu_.append("InitAll", "PressA+S", [](Menu &m)
                  {
-                     auto pad = m.getPad();
-                     if (pad.first & (1 << static_cast<int>(PadStateButton::START)))
-                     {
-                         DPRINT(("init all\n"));
-                         textScreen_.printInfo(0, 1, " Init'd ");
-                         textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
-                         resetConfigs();
-                     } });
+        auto pad = m.getPad();
+        if (pad.first & (1 << static_cast<int>(PadStateButton::START)))
+        {
+            DPRINT(("init all\n"));
+            textScreen_.printInfo(0, 1, " Init'd ");
+            textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
+            resetConfigs();
+        } });
 
     menu_.setOpenCloseFunc(
         [](bool open)
@@ -765,6 +806,41 @@ public:
     }
 };
 
+namespace
+{
+    uint8_t dacTable_[256];
+}
+
+void initDACPWM()
+{
+    // D,E,F 出力を PWM による DAC 出力にするための基本設定
+    // D2,E2,F2 はD1, E1, F1 に隣接しているものとする
+    for (auto gpio : {ButtonGPIO::D1, ButtonGPIO::E1, ButtonGPIO::F1})
+    {
+        auto pin = static_cast<int>(gpio);
+        gpio_set_function(pin, GPIO_FUNC_PWM);
+
+        auto config = pwm_get_default_config();
+        pwm_config_set_clkdiv(&config, 1.f); // 125M/256=488.28125kHz
+        pwm_config_set_wrap(&config, 255);
+        pwm_init(pwm_gpio_to_slice_num(pin), &config, true);
+    }
+
+    for (int i = 0; i < 256; ++i)
+    {
+        float v = i / 255.f;
+        float y = -0.2665f * v * v * v + 0.6474f * v * v - 1.0109f * v + 0.7198f;
+        dacTable_[i] = std::clamp(int(y * 255), 0, 255);
+    }
+}
+
+void setDACValue(ButtonGPIO gpio, int v)
+{
+    auto pin = static_cast<int>(gpio);
+    v = dacTable_[v];
+    pwm_set_gpio_level(pin, v);
+}
+
 bool powerOn()
 {
     // check Power good
@@ -839,6 +915,14 @@ int main()
 {
     stdio_init_all();
 
+#ifdef RASPBERRYPI_PICO_W
+    if (cyw43_arch_init())
+    {
+        printf("Wi-Fi init failed");
+        return -1;
+    }
+#endif
+
     util::initSysTick();
 
     initLED();
@@ -850,14 +934,6 @@ int main()
         gpio_set_dir(POWER_EN_PIN, GPIO_OUT);
         gpio_put(POWER_EN_PIN, 0);
     }
-
-#ifdef RASPBERRYPI_PICO_W
-    if (cyw43_arch_init())
-    {
-        printf("Wi-Fi init failed");
-        return -1;
-    }
-#endif
 
     load();
 
@@ -917,6 +993,8 @@ int main()
     initADC();
     startADC();
 
+    initDACPWM();
+
     watchdog_enable(5000, true);
 
     bool prevBtCnf = false;
@@ -970,6 +1048,7 @@ int main()
             {
                 power = powerOn();
             }
+            // sleep_ms(100); // 省電力?
         }
         else
         {
@@ -1007,7 +1086,7 @@ int main()
                     padManager.setVSyncCount(swRapidFire.getCounter());
                 }
 
-                padManager.update(btCnf, btCnfRelease, btCnfMiddleTrigger);
+                padManager.update(cdct, btCnf, btCnfRelease, btCnfMiddleTrigger);
 
                 for (int port = 0; port < 2; ++port)
                 {
@@ -1023,6 +1102,20 @@ int main()
                         gpio_put(static_cast<int>(m.gpio),
                                  st & (1u << static_cast<int>(m.padState)));
                     }
+
+#if 0
+                    auto &ast = padManager.getAnalogState(port);
+                    if (ast.mask)
+                    {
+                        for (int i = 0; i < 3; ++i)
+                        {
+                            if (ast.mask & (1u << i))
+                            {
+                                setDACValue(analogPortMap_[port][i], ast.values[i]);
+                            }
+                        }
+                    }
+#endif
                 }
 
                 if (HAS_LCD && !padManager.isConfigMode())

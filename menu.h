@@ -16,6 +16,7 @@ class Menu
 public:
     using ActionFunc = std::function<void(Menu &)>;
     using OpenCloseFunc = std::function<void(bool)>;
+    using ValueFormatFunc = std::function<void(char *, size_t, int)>;
 
 public:
     Menu(TextScreen *textScreen)
@@ -42,7 +43,8 @@ public:
 
     void append(const char *name, int *value,
                 std::pair<int, int> range,
-                const char *valueFormat,
+                //                const char *valueFormat,
+                ValueFormatFunc valueFormat,
                 ActionFunc onValueChange = {},
                 ActionFunc onButton = {},
                 bool menuButton = false)
@@ -60,7 +62,13 @@ public:
 
     void append(const char *name, const char *text, ActionFunc onButton = {}, bool menuButton = false)
     {
-        append(name, {}, {}, text, {}, onButton, menuButton);
+        //        append(name, {}, {}, text, {}, onButton, menuButton);
+        MenuItem item;
+        item.name = name;
+        item.valueText = text;
+        item.onButton = onButton;
+        item.menuButton = menuButton;
+        items_.push_back(item);
     }
 
     void refresh();
@@ -90,7 +98,9 @@ private:
         int *value{};
         std::pair<int, int> range{};
         const char **valueTexts{};
-        const char *valueFormat{};
+        const char *valueText{};
+        // const char *valueFormat{};
+        ValueFormatFunc valueFormat;
         bool menuButton = false; // onButton でMenuボタンを見る
 
         ActionFunc onValueChange;

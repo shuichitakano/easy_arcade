@@ -73,7 +73,7 @@ void PadManager::reset()
     padStates_[1].reset();
 }
 
-void PadManager::update(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong)
+void PadManager::update(int dclk, bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong)
 {
     switch (mode_)
     {
@@ -84,6 +84,19 @@ void PadManager::update(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLon
     case Mode::CONFIG:
         updateConfigMode(cnfButton, cnfButtonTrigger, cnfButtonLong);
         break;
+    }
+
+    for (int i = 0; i < N_OUTPUT_PORTS; ++i)
+    {
+        for (int j = 0; j < 2; ++j)
+        {
+            auto &re = rotEncoders_[i][j];
+            if (int axis = re.getAxis())
+            {
+                auto v = latestPadData_[i].analogs[axis] - 127;
+                re.update(dclk, v);
+            }
+        }
     }
 }
 
@@ -383,7 +396,7 @@ void PadManager::setVSyncCount(int count)
 }
 
 uint32_t
-PadManager::getButtons(int port) const
+PadManager::_getButtons(int port) const
 {
     if (port < 0 || port >= N_OUTPUT_PORTS)
     {
@@ -398,6 +411,27 @@ PadManager::getButtons(int port) const
     {
         return padStates_[port].getButtons();
     }
+}
+
+uint32_t
+PadManager::getButtons(int port) const
+{
+    auto v = _getButtons(port);
+
+    auto &rotEncs = rotEncoders_[port];
+    if (rotEncs[0])
+    {
+        v = rotEncs[0].overrideButton(v,
+                                      static_cast<int>(PadStateButton::LEFT),
+                                      static_cast<int>(PadStateButton::RIGHT));
+    }
+    if (rotEncs[1])
+    {
+        v = rotEncs[1].overrideButton(v,
+                                      static_cast<int>(PadStateButton::UP),
+                                      static_cast<int>(PadStateButton::DOWN));
+    }
+    return v;
 }
 
 uint32_t
@@ -498,4 +532,24 @@ void PadManager::setLED(bool on) const
     {
         ::setLED(on);
     }
+}
+
+void PadManager::setRotEncSetting(int kind, int axis, int scale)
+{
+    for (int i = 0; i < N_OUTPUT_PORTS; ++i)
+    {
+        auto &re = rotEncoders_[i][kind];
+        re.setAxis(axis);
+        re.setScale(scale);
+    }
+}
+
+const PadState::AnalogState &
+PadManager::getAnalogState(int port) const
+{
+    if (port < 0 || port >= N_OUTPUT_PORTS)
+    {
+        port = 0;
+    }
+    return padStates_[port].getAnalogState();
 }
