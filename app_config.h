@@ -11,7 +11,7 @@ class Deserializer;
 
 struct AppConfig
 {
-    static inline constexpr int VERSION = 0;
+    static inline constexpr int VERSION = 1;
 
     struct RapidSetting
     {
@@ -26,6 +26,27 @@ struct AppConfig
         NONE,
     };
 
+    enum class RotEncAxis
+    {
+        NONE,
+        X,
+        Y,
+        Z,
+        RX,
+        RY,
+        RZ,
+        SLIDER,
+        DIAL,
+        WHEEL,
+    };
+
+    struct RotEnc
+    {
+        int reverse = true;
+        int scale = 50;
+        int axis = 0;
+    };
+
     int initPowerOn = 0;
     int dispFPS = 1;
     int buttonDispMode = 0;
@@ -36,6 +57,10 @@ struct AppConfig
     std::array<int, 6> rapidPhase = {0, 1, 0, 1, 0, 1};
 
     RapidSetting rapidSettings[2];
+
+    std::array<RotEnc, 2> rotEnc{};
+
+    int nAnalogAxis = 0;
 
 public:
     ButtonDispMode getButtonDispMode() const

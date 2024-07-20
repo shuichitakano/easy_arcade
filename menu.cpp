@@ -122,11 +122,16 @@ void Menu::render() const
     {
         textScreen_->print(0, 1, layer_, item.valueTexts[*item.value]);
     }
-    else
+    else if (item.valueFormat)
     {
         char buf[16];
-        snprintf(buf, sizeof(buf), item.valueFormat, *item.value);
+        // snprintf(buf, sizeof(buf), item.valueFormat, *item.value);
+        item.valueFormat(buf, sizeof(buf), *item.value);
         textScreen_->print(0, 1, layer_, buf);
+    }
+    else if (item.valueText)
+    {
+        textScreen_->print(0, 1, layer_, item.valueText);
     }
 
     if (blinkPhase_)

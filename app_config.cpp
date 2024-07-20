@@ -24,6 +24,13 @@ void AppConfig::serialize(Serializer &s)
         s.append32u(rs.mask);
         s.append8u(rs.div);
     }
+    for (auto &re : rotEnc)
+    {
+        s.append8u(re.reverse);
+        s.append16u(re.scale);
+        s.append8u(re.axis);
+    }
+    s.append8u(nAnalogAxis);
 }
 
 bool AppConfig::deserialize(Deserializer &s)
@@ -48,5 +55,13 @@ bool AppConfig::deserialize(Deserializer &s)
         rs.mask = s.peek32u();
         rs.div = s.peek8u();
     }
+    for (auto &re : rotEnc)
+    {
+        re.reverse = s.peek8u();
+        re.scale = s.peek16u();
+        re.axis = s.peek8u();
+    }
+    nAnalogAxis = s.peek8u();
+
     return true;
 }

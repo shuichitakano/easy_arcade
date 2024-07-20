@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include "pad_translator.h"
+#include <array>
 
 enum class PadStateButton
 {
@@ -29,12 +30,23 @@ enum class PadStateButton
 class PadState
 {
 public:
+    inline static constexpr size_t MAX_BUTTONS = 32;
+    inline static constexpr size_t MAX_ANALOGS = 4;
+
+    struct AnalogState
+    {
+        int mask = 0;
+        std::array<uint8_t, MAX_ANALOGS> values;
+    };
+
+public:
     bool set(const PadTranslator &,
              int vid, int pid,
              const uint32_t *buttons, int nButtons,
              const int *analogs, int nAnalogs, int hat);
 
-    uint8_t getAnalog(int ch) const { return analog_[ch]; }
+    // uint8_t getAnalog(int ch) const { return analog_[ch]; }
+    const AnalogState &getAnalogState() const { return analog_; }
     uint32_t getButtons() const; // 連射処理されたボタン
     uint32_t getNonRapidButtons() const { return mappedButtons_; }
 
@@ -63,9 +75,6 @@ protected:
     void update();
 
 private:
-    inline static constexpr size_t MAX_BUTTONS = 32;
-    inline static constexpr size_t MAX_ANALOGS = 4;
-
     int rapidFireDiv_ = 1;
     uint32_t rapidFireMask_ = 0;
     uint32_t rapidFirePhase_ = 0xaaaaaaaa;
@@ -89,7 +98,7 @@ private:
 
     int nMapButtons_ = 0;
 
-    int8_t analog_[MAX_ANALOGS]{};
+    AnalogState analog_{};
 };
 
 // PadState *getPadState(size_t port = 0);

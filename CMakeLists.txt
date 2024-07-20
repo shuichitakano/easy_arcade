@@ -5,13 +5,13 @@ cmake_minimum_required(VERSION 3.13)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
-set(PICO_DEOPTIMIZED_DEBUG on)
+#set(PICO_DEOPTIMIZED_DEBUG on)
 
 # Initialise pico_sdk from installed location
 # (note this can come from environment, CMake cache etc)
 #set(PICO_SDK_PATH "/Users/shuichi/pico/pico-sdk")
 
-# set(PICO_BOARD pico_w CACHE STRING "Board type")
+#set(PICO_BOARD pico_w CACHE STRING "Board type")
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
@@ -42,6 +42,7 @@ add_executable(arcade_play
         text_screen.cpp
         font.cpp
         menu.cpp
+        rot_encoder.cpp
         app_config.cpp
         )
 
@@ -80,6 +81,7 @@ PRIVATE
 	hardware_dma
         hardware_flash
         hardware_i2c
+        hardware_pwm
 
         usb_midi_host
         )

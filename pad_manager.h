@@ -12,6 +12,7 @@
 #include <array>
 #include "pad_translator.h"
 #include "pad_state.h"
+#include "rot_encoder.h"
 #include "serializer.h"
 #include <functional>
 
@@ -63,7 +64,7 @@ public:
     PadManager();
     void reset();
 
-    void update(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
+    void update(int dclk, bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
     void setData(int port, const PadInput &input);
 
     static PadManager &instance()
@@ -87,6 +88,8 @@ public:
     void setRapidFireDiv(int port, int v);
     void setRapidFirePhaseMask(uint32_t v);
 
+    const PadState::AnalogState &getAnalogState(int port) const;
+
     void setVSyncCount(int count);
 
     void serialize(Serializer &s) const;
@@ -106,8 +109,11 @@ public:
     void setOnSaveFunc(onSaveFunc f) { onSaveFunc_ = f; }
 
     void resetConfig() { translator_.reset(); }
+    void setRotEncSetting(int kind, int axis, int scale);
 
 protected:
+    uint32_t _getButtons(int port) const;
+
     void updateNormalMode(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
     void updateConfigMode(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
 
@@ -129,6 +135,7 @@ private:
 
     std::array<PadInput, N_PORTS> latestPadData_;
     std::array<PadState, N_PORTS> padStates_;
+    RotEncoder rotEncoders_[N_OUTPUT_PORTS][2];
 
     struct ButtonSet
     {

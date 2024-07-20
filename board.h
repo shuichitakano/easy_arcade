@@ -3,11 +3,11 @@
  * since  : Fri Feb 23 2024 15:02:41
  */
 #pragma once
+#include <cstdint>
 
 #define EA_V2 1
 
 static constexpr bool REVERSE_STATE = false; // 541 なら true
-                                             // static constexpr bool REVERSE_STATE = true; // 541 なら true
 
 inline constexpr uint32_t CPU_CLOCK = 125000000;
 
@@ -17,9 +17,9 @@ inline constexpr uint32_t CPU_CLOCK = 125000000;
 #define BOARD_VERSION "V1.00"
 
 inline constexpr bool HAS_LCD = true;
+
 inline constexpr int I2C_SDA_PIN = 26;
 inline constexpr int I2C_SCL_PIN = 27;
-
 inline constexpr int PDPG_PIN = 0;
 
 inline constexpr bool LED_ACTIVE_LOW = true;
@@ -61,8 +61,11 @@ enum class ButtonGPIO
 #define BOARD_NAME "EasyArcade"
 #define BOARD_VERSION "V1.00"
 inline constexpr bool HAS_LCD = false;
+
+// dummy
 inline constexpr int I2C_SDA_PIN = 0;
 inline constexpr int I2C_SCL_PIN = 0;
+inline constexpr int PDPG_PIN = 0;
 
 inline constexpr bool LED_ACTIVE_LOW = false;
 
