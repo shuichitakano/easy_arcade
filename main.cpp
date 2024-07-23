@@ -993,7 +993,7 @@ int main()
     initADC();
     startADC();
 
-    initDACPWM();
+    // initDACPWM();
 
     watchdog_enable(5000, true);
 

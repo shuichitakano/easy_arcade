@@ -115,9 +115,8 @@ extern "C"
     }
 #endif
 
-    void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *report, uint16_t len)
+    void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance, const xinputh_interface_t *xid_itf, uint16_t len)
     {
-        auto *xid_itf = reinterpret_cast<const xinputh_interface_t *>(report);
         auto *p = &xid_itf->pad;
 
         if (xid_itf->connected && xid_itf->new_pad_data)
