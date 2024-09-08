@@ -14,7 +14,7 @@ inline constexpr uint32_t CPU_CLOCK = 125000000;
 #if EA_V2
 
 #define BOARD_NAME "EA2"
-#define BOARD_VERSION "V1.01"
+#define BOARD_VERSION "V1.0.1"
 
 inline constexpr bool HAS_LCD = true;
 
