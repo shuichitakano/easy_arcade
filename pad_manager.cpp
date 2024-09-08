@@ -78,11 +78,11 @@ void PadManager::update(int dclk, bool cnfButton, bool cnfButtonTrigger, bool cn
     switch (mode_)
     {
     case Mode::NORMAL:
-        updateNormalMode(cnfButton, cnfButtonTrigger, cnfButtonLong);
+        updateNormalMode(dclk, cnfButton, cnfButtonTrigger, cnfButtonLong);
         break;
 
     case Mode::CONFIG:
-        updateConfigMode(cnfButton, cnfButtonTrigger, cnfButtonLong);
+        updateConfigMode(dclk, cnfButton, cnfButtonTrigger, cnfButtonLong);
         break;
     }
 
@@ -91,8 +91,9 @@ void PadManager::update(int dclk, bool cnfButton, bool cnfButtonTrigger, bool cn
         for (int j = 0; j < 2; ++j)
         {
             auto &re = rotEncoders_[i][j];
-            if (int axis = re.getAxis())
+            if (re)
             {
+                int axis = re.getAxis();
                 auto v = latestPadData_[i].analogs[axis] - 127;
                 re.update(dclk, v);
             }
@@ -148,7 +149,7 @@ void PadManager::blinkLED(bool reverse, int n)
     }
 }
 
-void PadManager::updateNormalMode(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong)
+void PadManager::updateNormalMode(int dclk, bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong)
 {
     if (cnfButtonLong && enableModeChangeByButton_)
     {
@@ -156,7 +157,7 @@ void PadManager::updateNormalMode(bool cnfButton, bool cnfButtonTrigger, bool cn
     }
 }
 
-void PadManager::updateConfigMode(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong)
+void PadManager::updateConfigMode(int dclk, bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong)
 {
     if (configMode_.waitFirstIdle_)
     {
@@ -178,6 +179,19 @@ void PadManager::updateConfigMode(bool cnfButton, bool cnfButtonTrigger, bool cn
         // このボタン設定をスキップ
         printf("skip.\n");
         nextButtonConfig();
+    }
+
+    if (!configMode_.anyButtonOn_ && configMode_.curButtonSet_.hasData())
+    {
+        // 何か入力された後、すべて話された状態でしばらく経過したら次のボタンへ
+        auto &ct = configMode_.idleCycle_;
+        ct += dclk;
+        if (ct > (uint32_t)(0.1f * CPU_CLOCK))
+        {
+            ct = 0;
+            nextButtonConfig();
+            return;
+        }
     }
 }
 
@@ -261,6 +275,7 @@ void PadManager::setDataConfigMode(int port, const PadInput &input)
     }
 
     configMode_.curButtonSet_ = cur;
+    configMode_.anyButtonOn_ = anyOn;
 
     if (anyOn)
     {
@@ -271,6 +286,7 @@ void PadManager::setDataConfigMode(int port, const PadInput &input)
             printf("configure port %d...\n", port);
         }
     }
+#if 0
     else
     {
         // 何か入力された後すべて離された
@@ -281,6 +297,7 @@ void PadManager::setDataConfigMode(int port, const PadInput &input)
             return;
         }
     }
+#endif
 }
 
 void PadManager::nextButtonConfig()

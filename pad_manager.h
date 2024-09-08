@@ -114,8 +114,8 @@ public:
 protected:
     uint32_t _getButtons(int port) const;
 
-    void updateNormalMode(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
-    void updateConfigMode(bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
+    void updateNormalMode(int dclk, bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
+    void updateConfigMode(int dclk, bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
 
     void setDataNormalMode(int port, const PadInput &input);
     void setDataConfigMode(int port, const PadInput &input);
@@ -185,6 +185,8 @@ private:
 
         PadStateButton curButton_{}; // 現在設定中のボタン
         ButtonSet curButtonSet_;
+        bool anyButtonOn_ = false;
+        uint32_t idleCycle_ = 0;
 
         std::vector<ButtonSet> buttonSets_;
     };
