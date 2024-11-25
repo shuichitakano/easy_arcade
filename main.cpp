@@ -442,13 +442,20 @@ void resetRapidSettings()
     }
 }
 
+void applySettings()
+{
+    setRapidPhaseMask();
+    setRapidSettings();
+    setRotEncSettings(0);
+    setRotEncSettings(1);
+}
+
 void resetConfigs()
 {
     appConfig_ = AppConfig();
     PadManager::instance().resetConfig();
 
-    setRapidPhaseMask();
-    setRapidSettings();
+    applySettings();
 }
 
 void load()
@@ -468,10 +475,7 @@ void load()
     PadManager::instance().deserialize(s);
 
     //
-    setRapidPhaseMask();
-    setRapidSettings();
-    setRotEncSettings(0);
-    setRotEncSettings(1);
+    applySettings();
 
     DPRINT(("Loaded.\n"));
 }
@@ -1033,8 +1037,9 @@ int main()
         {
             ctCnfPush = ct32;
         }
-        constexpr uint32_t CT_MIDDLEPUSH = CPU_CLOCK * 1; // 1s
-        constexpr uint32_t CT_LONGPUSH = CPU_CLOCK * 3;   // 3s
+        constexpr uint32_t CT_MIDDLEPUSH = CPU_CLOCK * 1 /*s*/;
+        constexpr uint32_t CT_LONGPUSH = CPU_CLOCK * 3 /*s*/;
+        constexpr uint32_t CT_ALLINIT = CPU_CLOCK * 20 /*s*/;
 
         bool btCnfMiddle = btCnf && (ct32 - ctCnfPush > CT_MIDDLEPUSH);
         bool btCnfMiddleTrigger = !prevBtCnfMiddle && btCnfMiddle;
@@ -1047,6 +1052,14 @@ int main()
             if ((prevBtCnf ^ btCnf) && !btCnf && !prevBtCnfLong)
             {
                 power = powerOn();
+            }
+            else if (btCnf && (ct32 - ctCnfPush) > CT_ALLINIT)
+            {
+                DPRINT(("init all\n"));
+                textScreen_.printInfo(0, 0, "ALL");
+                textScreen_.printInfo(0, 1, " Init'd");
+                textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
+                resetConfigs();
             }
             // sleep_ms(100); // 省電力?
         }

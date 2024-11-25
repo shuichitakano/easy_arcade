@@ -14,7 +14,11 @@ inline constexpr uint32_t CPU_CLOCK = 125000000;
 #if EA_V2
 
 #define BOARD_NAME "EA2"
-#define BOARD_VERSION "V1.0.1"
+#define BOARD_VERSION "V1.0.2"
+
+// * v1.0.2
+//  - All Reset メニューでロータリーエンコーダの初期化反映が漏れていたのを修正
+//  - 電源OFF 時に電源ボタンを 20s 押し続けると All Reset する機能を追加
 
 inline constexpr bool HAS_LCD = true;
 
