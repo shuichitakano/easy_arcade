@@ -253,7 +253,7 @@ CMDボタンと上下で基本連射速度からの分周比を設定できま�
 
 最新版のファームウェアは以下のページでダウンロード可能です。 
 
-[v1.0.2](https://github.com/shuichitakano/easy_arcade/releases/download/v1.0.2/firmware_v1_0_2.zip)
+[v1.1.0](https://github.com/shuichitakano/easy_arcade/releases/download/v1.1.0/firmware_v1_1_0.zip)
 
 ファームウェアをアップデートすると、バージョンにより全ての設定がリセットされることがあります。
 あらかじめご了承ください。
