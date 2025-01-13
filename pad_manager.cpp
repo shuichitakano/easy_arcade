@@ -28,8 +28,22 @@ namespace
             "D",
             "E",
             "F",
+            "COIN2",
+            "START2",
+            "UP2",
+            "DOWN2",
+            "LEFT2",
+            "RIGHT2",
+            "A2",
+            "B2",
+            "C2",
+            "D2",
+            "E2",
+            "F2",
         };
-        return tbl[static_cast<int>(b)];
+        auto i = static_cast<size_t>(b);
+        assert(i < std::size(tbl));
+        return tbl[i];
     };
 
     void printButtonMessage(PadStateButton b)
@@ -44,24 +58,24 @@ PadManager::PadManager()
     using AP = PadConfig::AnalogPos;
     using HP = PadConfig::HatPos;
     using B = PadStateButton;
-    PadConfig defaultConfig{0, 0, {
-                                      {T::ANALOG, 0, AP::L, AP::MID, {}, static_cast<int>(B::LEFT)},
-                                      {T::ANALOG, 0, AP::H, AP::MID, {}, static_cast<int>(B::RIGHT)},
-                                      {T::ANALOG, 1, AP::L, AP::MID, {}, static_cast<int>(B::UP)},
-                                      {T::ANALOG, 1, AP::H, AP::MID, {}, static_cast<int>(B::DOWN)},
-                                      {T::HAT, 0, {}, {}, HP::LEFT, static_cast<int>(B::LEFT)},
-                                      {T::HAT, 0, {}, {}, HP::RIGHT, static_cast<int>(B::RIGHT)},
-                                      {T::HAT, 0, {}, {}, HP::UP, static_cast<int>(B::UP)},
-                                      {T::HAT, 0, {}, {}, HP::DOWN, static_cast<int>(B::DOWN)},
-                                      {T::BUTTON, 0, {}, {}, {}, static_cast<int>(B::A)},
-                                      {T::BUTTON, 1, {}, {}, {}, static_cast<int>(B::B)},
-                                      {T::BUTTON, 2, {}, {}, {}, static_cast<int>(B::COIN)},
-                                      {T::BUTTON, 3, {}, {}, {}, static_cast<int>(B::START)},
-                                      {T::BUTTON, 4, {}, {}, {}, static_cast<int>(B::C)},
-                                      {T::BUTTON, 5, {}, {}, {}, static_cast<int>(B::D)},
-                                      {T::BUTTON, 6, {}, {}, {}, static_cast<int>(B::E)},
-                                      {T::BUTTON, 7, {}, {}, {}, static_cast<int>(B::F)},
-                                  },
+    PadConfig defaultConfig{0, 0, 0, {
+                                         {T::ANALOG, 0, AP::L, AP::MID, {}, static_cast<int>(B::LEFT)},
+                                         {T::ANALOG, 0, AP::H, AP::MID, {}, static_cast<int>(B::RIGHT)},
+                                         {T::ANALOG, 1, AP::L, AP::MID, {}, static_cast<int>(B::UP)},
+                                         {T::ANALOG, 1, AP::H, AP::MID, {}, static_cast<int>(B::DOWN)},
+                                         {T::HAT, 0, {}, {}, HP::LEFT, static_cast<int>(B::LEFT)},
+                                         {T::HAT, 0, {}, {}, HP::RIGHT, static_cast<int>(B::RIGHT)},
+                                         {T::HAT, 0, {}, {}, HP::UP, static_cast<int>(B::UP)},
+                                         {T::HAT, 0, {}, {}, HP::DOWN, static_cast<int>(B::DOWN)},
+                                         {T::BUTTON, 0, {}, {}, {}, static_cast<int>(B::A)},
+                                         {T::BUTTON, 1, {}, {}, {}, static_cast<int>(B::B)},
+                                         {T::BUTTON, 2, {}, {}, {}, static_cast<int>(B::COIN)},
+                                         {T::BUTTON, 3, {}, {}, {}, static_cast<int>(B::START)},
+                                         {T::BUTTON, 4, {}, {}, {}, static_cast<int>(B::C)},
+                                         {T::BUTTON, 5, {}, {}, {}, static_cast<int>(B::D)},
+                                         {T::BUTTON, 6, {}, {}, {}, static_cast<int>(B::E)},
+                                         {T::BUTTON, 7, {}, {}, {}, static_cast<int>(B::F)},
+                                     },
                             {}};
 
     translator_.setDefaultConfig(std::move(defaultConfig));
@@ -218,10 +232,18 @@ void PadManager::setData(int port, const PadInput &input)
 
 void PadManager::setDataNormalMode(int port, const PadInput &input)
 {
-    padStates_[port].set(translator_,
-                         input.vid, input.pid,
-                         input.buttons.data(), N_BUTTONS,
-                         input.analogs.data(), N_ANALOGS, input.hat);
+    int n = twinPortMode_ ? 2 : 1;
+    for (int i = 0; i < n; ++i)
+    {
+        int p = port + i;
+        if (p < N_OUTPUT_PORTS)
+        {
+            padStates_[p].set(translator_,
+                              input.vid, input.pid, i,
+                              input.buttons.data(), N_BUTTONS,
+                              input.analogs.data(), N_ANALOGS, input.hat);
+        }
+    }
 }
 
 void PadManager::setDataConfigMode(int port, const PadInput &input)
@@ -306,7 +328,8 @@ void PadManager::nextButtonConfig()
     configMode_.curButtonSet_.clear();
 
     configMode_.curButton_ = static_cast<PadStateButton>(static_cast<int>(configMode_.curButton_) + 1);
-    if (configMode_.curButton_ == PadStateButton::MAX)
+    auto tail = twinPortMode_ ? PadStateButton::MAX_2P : PadStateButton::MAX;
+    if (configMode_.curButton_ == tail)
     {
         // おわり
         saveConfigAndExit();
@@ -337,10 +360,25 @@ void PadManager::saveConfigAndExit()
     auto &sets = configMode_.buttonSets_;
     if (!sets.empty())
     {
-        std::vector<PadConfig::Unit> units;
+        std::vector<PadConfig::Unit> units[2]; // 1P, 2P同時設定する事がある
         int index = 0;
         for (auto &s : sets)
         {
+            auto append = [&](auto &u)
+            {
+                if (index < N_PAD_STATE_BUTTONS)
+                {
+                    u.index = index;
+                    units[0].push_back(u);
+                }
+                else if (twinPortMode_)
+                {
+                    u.index = index - N_PAD_STATE_BUTTONS + 1;
+                    // CMDないので+1
+                    units[1].push_back(u);
+                }
+            };
+
             int subIndex = 0;
             for (int i = 0; i < N_BUTTONS; ++i)
             {
@@ -349,9 +387,8 @@ void PadManager::saveConfigAndExit()
                     PadConfig::Unit u;
                     u.type = PadConfig::Type::BUTTON;
                     u.number = i;
-                    u.index = index;
                     u.subIndex = subIndex++;
-                    units.push_back(u);
+                    append(u);
                 }
             }
             if (s.analogIndex >= 0)
@@ -361,11 +398,12 @@ void PadManager::saveConfigAndExit()
                 u.number = s.analogIndex;
                 u.analogOn = s.analogOn;
                 u.analogOff = s.analogOff;
-                u.index = index;
                 u.subIndex = subIndex++;
-                units.push_back(u);
+                append(u);
             }
-            for (auto hatPos : {PadConfig::HatPos::LEFT, PadConfig::HatPos::RIGHT, PadConfig::HatPos::UP, PadConfig::HatPos::DOWN})
+            for (auto hatPos :
+                 {PadConfig::HatPos::LEFT, PadConfig::HatPos::RIGHT,
+                  PadConfig::HatPos::UP, PadConfig::HatPos::DOWN})
             {
                 bool f = testHat(s.hat, hatPos);
                 if (f)
@@ -373,22 +411,27 @@ void PadManager::saveConfigAndExit()
                     PadConfig::Unit u;
                     u.type = PadConfig::Type::HAT;
                     u.hatPos = hatPos;
-                    u.index = index;
                     u.subIndex = subIndex++;
-                    units.push_back(u);
+                    append(u);
                 }
             }
             ++index;
         }
 
-        if (units.empty())
+        if (units[0].empty() && units[1].empty())
         {
-            printf("no entry\n");
+            DPRINT(("no entry\n"));
         }
         else
         {
-            printf("save config\n");
-            translator_.append({configMode_.vid_, configMode_.pid_, units, {}});
+            DPRINT(("save config\n"));
+            for (int i = 0; i < 2; ++i)
+            {
+                if (!units[i].empty())
+                {
+                    translator_.append({configMode_.vid_, configMode_.pid_, i, units[i], {}});
+                }
+            }
             if (onSaveFunc_)
             {
                 onSaveFunc_();

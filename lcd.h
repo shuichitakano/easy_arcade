@@ -37,6 +37,8 @@ protected:
     void writeDataNonBlocking(uint8_t data);
     void setAddrForNonBlocking();
 
+    void _waitForNonBlocking();
+
 private:
     i2c_inst_t *i2c_{};
     bool needSetAddr_ = true;

@@ -47,15 +47,16 @@ public:
         AnalogPos analogOff{};
         HatPos hatPos{};
 
-        uint8_t index = 0;    // 出力ボタン、アナログ番号
-        uint8_t subIndex = 0; // 同一ボタン出力の中でのサブインデックス
+        uint8_t index = 0;     // 出力ボタン、アナログ番号
+        uint8_t subIndex = 0;  // 同一ボタン出力の中でのサブインデックス
+        uint8_t inPortOfs = 0; // 入力ポートオフセット
 
     public:
         bool testAnalog(uint8_t v) const;
 
         auto makeTie() const
         {
-            return std::tie(type, number, analogOn, analogOff, hatPos, index, subIndex);
+            return std::tie(type, number, analogOn, analogOff, hatPos, index, subIndex, inPortOfs);
         };
         friend bool operator<(const Unit &a, const Unit &b)
         {
@@ -69,9 +70,12 @@ public:
         void dump() const;
     };
 
+    using DeviceID = std::tuple<uint16_t, uint16_t, uint8_t>;
+
 public:
     PadConfig() = default;
-    PadConfig(int vid, int pid, const std::vector<Unit> &buttons, const std::vector<Unit> &analogs);
+    PadConfig(int vid, int pid, int outPortOfs,
+              const std::vector<Unit> &buttons, const std::vector<Unit> &analogs);
     PadConfig(Deserializer &s);
 
     bool convertButton(int i, const uint32_t *buttons, int nButtons, const int *analogs, int nAnalogs, int hat) const;
@@ -85,7 +89,9 @@ public:
 
     int getVID() const { return vid_; }
     int getPID() const { return pid_; }
-    std::pair<int, int> getDeviceID() const { return {vid_, pid_}; }
+    int getOutPortOfs() const { return outPortOfs_; }
+
+    DeviceID getDeviceID() const { return {vid_, pid_, outPortOfs_}; }
 
     void serialize(Serializer &s) const;
     void dump() const;
@@ -93,8 +99,10 @@ public:
 private:
     std::vector<Unit> buttons_;
     std::vector<Unit> analogs_;
-    int vid_ = 0;
-    int pid_ = 0;
+
+    uint16_t vid_ = 0;
+    uint16_t pid_ = 0;
+    uint8_t outPortOfs_ = 0; // 出力ポートオフセット
 };
 
 int getLevel(PadConfig::AnalogPos p);
@@ -112,7 +120,7 @@ public:
 
     void setDefaultConfig(PadConfig &&cnf) { defaultConfig_ = std::move(cnf); }
     void append(PadConfig &&cnf);
-    const PadConfig *find(int vid, int pid) const;
+    const PadConfig *find(int vid, int pid, int portOfs = 0) const;
 
     void serialize(Serializer &s) const;
     void deserialize(Deserializer &s);
@@ -120,7 +128,7 @@ public:
     void reset();
 
 protected:
-    PadConfig *_find(int vid, int pid);
+    PadConfig *_find(int vid, int pid, int portOfs = 0);
 
     void sort();
 };

@@ -18,60 +18,60 @@ namespace
             r.dump();
         }
 
-        printf("Buttons: ");
+        DPRINT(("Buttons: "));
         for (auto &r : v)
         {
             if (r.isButton())
             {
-                printf("%d ", r.bitOfs_);
+                DPRINT(("%d ", r.bitOfs_));
             }
         }
-        printf("\n");
+        DPRINT(("\n"));
 
-        printf("Hats: ");
+        DPRINT(("Hats: "));
         for (auto &r : v)
         {
             if (r.isHat())
             {
-                printf("%d ", r.bitOfs_);
+                DPRINT(("%d ", r.bitOfs_));
             }
         }
-        printf("\n");
+        DPRINT(("\n"));
 
-        printf("Analog: ");
+        DPRINT(("Analog: "));
         for (auto &r : v)
         {
             auto idx = r.getAnalogIndex();
             if (idx >= 0)
             {
-                printf("(%d, %dbits [%d:%d]) ", r.bitOfs_, r.bits_, r.min_, r.max_);
+                DPRINT(("(%d, %dbits [%d:%d]) ", r.bitOfs_, r.bits_, r.min_, r.max_));
             }
         }
-        printf("\n");
+        DPRINT(("\n"));
     }
 } // namespace
 
 void HIDInfo::Report::dump() const
 {
-    printf("usage = %08x, ofs = %d, bits = %d, min = %d, max = %d, const = %d, array = %d, nullable = %d\n",
-           usage_, bitOfs_, bits_, min_, max_, isConst_, isArray_, isNullable_);
+    DPRINT(("usage = %08x, ofs = %d, bits = %d, min = %d, max = %d, const = %d, array = %d, nullable = %d\n",
+            usage_, bitOfs_, bits_, min_, max_, isConst_, isArray_, isNullable_));
 }
 
 void HIDInfo::ReportSet::dump() const
 {
     if (!inputs_.empty())
     {
-        printf("inputs:\n");
+        DPRINT(("inputs:\n"));
         dumpReports(inputs_);
     }
     if (!outputs_.empty())
     {
-        printf("outputs:\n");
+        DPRINT(("outputs:\n"));
         dumpReports(outputs_);
     }
     if (!features_.empty())
     {
-        printf("features:\n");
+        DPRINT(("features:\n"));
         dumpReports(features_);
     }
 }
@@ -568,33 +568,33 @@ void HIDInfo::parseReport(const uint8_t *p, size_t size,
 #if 0
     if (!analogs.empty())
     {
-        printf("A: ");
+        DPRINT(("A: "));
         for (int v : analogs)
         {
-            printf("%d ", v);
+            DPRINT(("%d ", v));
         }
     }
 
-    printf("B: ");
+    DPRINT(("B: "));
     for (int i = 0; i < 32; ++i)
     {
         bool f = buttons & (1u << i);
-        printf("%d", f);
+        DPRINT(("%d", f));
     }
     if (hat >= 0)
     {
-        printf(" H: %d", hat);
+        DPRINT((" H: %d", hat));
     }
-    printf("\n");
+    DPRINT(("\n"));
 #endif
 }
 
 void HIDInfo::dump()
 {
-    printf("usageLV0 = %08x\n", usageLV0_);
+    DPRINT(("usageLV0 = %08x\n", usageLV0_));
     for (auto &v : reportSets_)
     {
-        printf("reportID = %d\n", v.first);
+        DPRINT(("reportID = %d\n", v.first));
         v.second.dump();
     }
 }

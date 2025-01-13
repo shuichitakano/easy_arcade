@@ -44,6 +44,7 @@ add_executable(arcade_play
         menu.cpp
         rot_encoder.cpp
         app_config.cpp
+        pca9555.cpp
         )
 
 pico_set_program_name(arcade_play "arcade_play")
@@ -55,7 +56,7 @@ pico_enable_stdio_usb(arcade_play 0)
 # tinyusb
 set(FAMILY rp2040)
 set(BOARD pico_sdk)
-set(TINYUSB_DEBUG_LEVE 0)
+set(TINYUSB_DEBUG_LEVEL 0)
 
 # Add the standard library to the build
 target_link_libraries(arcade_play

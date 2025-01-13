@@ -11,7 +11,7 @@ class Deserializer;
 
 struct AppConfig
 {
-    static inline constexpr int VERSION = 1;
+    static inline constexpr int VERSION = 3;
 
     struct RapidSetting
     {
@@ -53,6 +53,7 @@ struct AppConfig
     int backLight = 1;
     // int LCDContrast = 0;
     int rapidModeSynchro = 1;
+    int synchroFetchPhase = 5;
     int softwareRapidSpeed = 10;
     std::array<int, 6> rapidPhase = {0, 1, 0, 1, 0, 1};
 
@@ -60,6 +61,7 @@ struct AppConfig
 
     std::array<RotEnc, 2> rotEnc{};
 
+    int twinPortMode = false; // 1P, 2P混在モード
     int nAnalogAxis = 0;
 
 public:

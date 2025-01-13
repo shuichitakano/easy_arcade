@@ -186,6 +186,12 @@ bool LCD::defineCharNonBlocking(int n, const uint8_t *data)
 
 void LCD::waitForNonBlocking()
 {
+    _waitForNonBlocking();
+    needSetAddr_ = true;
+}
+
+void LCD::_waitForNonBlocking()
+{
     waitForI2CNonBlocking(i2c_);
 }
 

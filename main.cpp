@@ -23,6 +23,7 @@
 #include "app_config.h"
 #include "font.h"
 #include "serializer.h"
+#include "pca9555.h"
 #include "debug.h"
 #include <cmath>
 
@@ -32,6 +33,11 @@
 
 namespace
 {
+    TextScreen textScreen_;
+    Menu menu_{&textScreen_};
+
+    AppConfig appConfig_;
+
     struct PortMap
     {
         PadStateButton padState;
@@ -68,13 +74,15 @@ namespace
         }};
 
     const ButtonGPIO analogPortMap_[2][3] = {
-        {ButtonGPIO::D1, ButtonGPIO::E1, ButtonGPIO::F1},
-        {ButtonGPIO::D2, ButtonGPIO::E2, ButtonGPIO::F2}};
+        //        {ButtonGPIO::D1, ButtonGPIO::E1, ButtonGPIO::F1},
+        //        {ButtonGPIO::D2, ButtonGPIO::E2, ButtonGPIO::F2}};
+        {ButtonGPIO::E1, ButtonGPIO::E2, ButtonGPIO::F1},
+        {ButtonGPIO::D1, ButtonGPIO::D2, ButtonGPIO::F2}};
 }
 
 class VSyncDetector
 {
-    int flipDelay_ = 7; // update単位
+    // int flipDelay_ = 7; // update単位
     uint32_t counter_ = 0;
 
     int min_ = 256;
@@ -213,7 +221,8 @@ public:
             }
         }
 
-        if (curInterval_ == flipDelay_)
+        int flipDelay = interval_ * appConfig_.synchroFetchPhase * 102 >> 10;
+        if (curInterval_ == flipDelay)
         {
             ++counter_;
             // PadManager::instance().setVSyncCount(counter_);
@@ -361,14 +370,6 @@ bool __no_inline_not_in_flash_func(getBootButton)()
 
 void updateMIDIState();
 
-namespace
-{
-    TextScreen textScreen_;
-    Menu menu_{&textScreen_};
-
-    AppConfig appConfig_;
-}
-
 // void setLCDContrast()
 // {
 //     if (HAS_LCD)
@@ -442,12 +443,18 @@ void resetRapidSettings()
     }
 }
 
+void setTwinPortSetting()
+{
+    PadManager::instance().setTwinPortMode(appConfig_.twinPortMode);
+}
+
 void applySettings()
 {
     setRapidPhaseMask();
     setRapidSettings();
     setRotEncSettings(0);
     setRotEncSettings(1);
+    setTwinPortSetting();
 }
 
 void resetConfigs()
@@ -470,6 +477,7 @@ void load()
     if (!appConfig_.deserialize(s))
     {
         DPRINT(("AppConfig load failed\n"));
+        return;
     }
 
     PadManager::instance().deserialize(s);
@@ -526,39 +534,73 @@ char getButtonName(PadStateButton b)
     }
 }
 
-const char *getButtonConfigText(PadStateButton b)
+#define MAKE_BUTTON_STRING_CASE(x, str) \
+    case PadStateButton::x:             \
+        return str;
+
+const char *getButtonConfigTextNormal(PadStateButton b)
 {
     switch (b)
     {
-    case PadStateButton::LEFT:
-        return "Push \10  ";
-    case PadStateButton::RIGHT:
-        return "Push \7  ";
-    case PadStateButton::UP:
-        return "Push \5  ";
-    case PadStateButton::DOWN:
-        return "Push \6  ";
-    case PadStateButton::A:
-        return "Push A  ";
-    case PadStateButton::B:
-        return "Push B  ";
-    case PadStateButton::C:
-        return "Push C  ";
-    case PadStateButton::D:
-        return "Push D  ";
-    case PadStateButton::E:
-        return "Push E  ";
-    case PadStateButton::F:
-        return "Push F  ";
-    case PadStateButton::COIN:
-        return "PushCOIN";
-    case PadStateButton::START:
-        return "PshSTART";
-    case PadStateButton::CMD:
-        return "Push CMD";
+        // clang-format off
+        MAKE_BUTTON_STRING_CASE(LEFT,  "Push \10  ");
+        MAKE_BUTTON_STRING_CASE(RIGHT, "Push \7  ");
+        MAKE_BUTTON_STRING_CASE(UP,    "Push \5  ");
+        MAKE_BUTTON_STRING_CASE(DOWN,  "Push \6  ");
+        MAKE_BUTTON_STRING_CASE(A,     "Push A  ");
+        MAKE_BUTTON_STRING_CASE(B,     "Push B  ");
+        MAKE_BUTTON_STRING_CASE(C,     "Push C  ");
+        MAKE_BUTTON_STRING_CASE(D,     "Push D  ");
+        MAKE_BUTTON_STRING_CASE(E,     "Push E  ");
+        MAKE_BUTTON_STRING_CASE(F,     "Push F  ");
+        MAKE_BUTTON_STRING_CASE(COIN,  "PushCOIN");
+        MAKE_BUTTON_STRING_CASE(START, "PshSTART");
+        MAKE_BUTTON_STRING_CASE(CMD,   "Push CMD");
+        // clang-format on
     default:
         return "";
     }
+}
+
+const char *getButtonConfigText2PortMode(PadStateButton b)
+{
+    switch (b)
+    {
+        // clang-format off
+        MAKE_BUTTON_STRING_CASE(LEFT,  "1P \10    ");
+        MAKE_BUTTON_STRING_CASE(RIGHT, "1P \7    ");
+        MAKE_BUTTON_STRING_CASE(UP,    "1P \5    ");
+        MAKE_BUTTON_STRING_CASE(DOWN,  "1P \6    ");
+        MAKE_BUTTON_STRING_CASE(A,     "1P A    ");
+        MAKE_BUTTON_STRING_CASE(B,     "1P B    ");
+        MAKE_BUTTON_STRING_CASE(C,     "1P C    ");
+        MAKE_BUTTON_STRING_CASE(D,     "1P D    ");
+        MAKE_BUTTON_STRING_CASE(E,     "1P E    ");
+        MAKE_BUTTON_STRING_CASE(F,     "1P F    ");
+        MAKE_BUTTON_STRING_CASE(COIN,  "1P COIN ");
+        MAKE_BUTTON_STRING_CASE(START, "1P START");
+        MAKE_BUTTON_STRING_CASE(CMD,   "Push CMD");
+        MAKE_BUTTON_STRING_CASE(LEFT_2P,  "2P \10    ");
+        MAKE_BUTTON_STRING_CASE(RIGHT_2P, "2P \7    ");
+        MAKE_BUTTON_STRING_CASE(UP_2P,    "2P \5    ");
+        MAKE_BUTTON_STRING_CASE(DOWN_2P,  "2P \6    ");
+        MAKE_BUTTON_STRING_CASE(A_2P,     "2P A    ");
+        MAKE_BUTTON_STRING_CASE(B_2P,     "2P B    ");
+        MAKE_BUTTON_STRING_CASE(C_2P,     "2P C    ");
+        MAKE_BUTTON_STRING_CASE(D_2P,     "2P D    ");
+        MAKE_BUTTON_STRING_CASE(E_2P,     "2P E    ");
+        MAKE_BUTTON_STRING_CASE(F_2P,     "2P F    ");
+        MAKE_BUTTON_STRING_CASE(COIN_2P,  "2P COIN ");
+        MAKE_BUTTON_STRING_CASE(START_2P, "2P START");
+        // clang-format on
+    default:
+        return "";
+    }
+}
+
+const char *getButtonConfigText(PadStateButton b)
+{
+    return appConfig_.twinPortMode ? getButtonConfigText2PortMode(b) : getButtonConfigTextNormal(b);
 }
 
 void initMenu()
@@ -603,6 +645,9 @@ void initMenu()
                  // "%2dShot\3"
                  [](char *buf, size_t bufSize, int v)
                  { snprintf(buf, bufSize, "%2dShot\3", v); });
+    menu_.append("SyncUpT", &appConfig_.synchroFetchPhase, {0, 9},
+                 [](char *buf, size_t bufSize, int v)
+                 { snprintf(buf, bufSize, "%2d%%", v * 10); });
 
     auto onRapidPhaseChanged = [](Menu &m)
     {
@@ -653,6 +698,10 @@ void initMenu()
     menu_.append(
         "RotEncY", &appConfig_.rotEnc[1].reverse, reverseText, std::size(reverseText), [&](Menu &m)
         { setRotEncSettings(1); });
+
+    menu_.append("2PortMd", &appConfig_.twinPortMode, onOffText, std::size(onOffText),
+                 [&](Menu &m)
+                 { setTwinPortSetting(); });
 
     menu_.append("InitAll", "PressA+S", [](Menu &m)
                  {
@@ -819,7 +868,8 @@ void initDACPWM()
 {
     // D,E,F 出力を PWM による DAC 出力にするための基本設定
     // D2,E2,F2 はD1, E1, F1 に隣接しているものとする
-    for (auto gpio : {ButtonGPIO::D1, ButtonGPIO::E1, ButtonGPIO::F1})
+    //    for (auto gpio : {ButtonGPIO::D1, ButtonGPIO::E1, ButtonGPIO::F1})
+    for (auto gpio : {ButtonGPIO::E1, ButtonGPIO::E2, ButtonGPIO::F1})
     {
         auto pin = static_cast<int>(gpio);
         gpio_set_function(pin, GPIO_FUNC_PWM);
@@ -845,6 +895,24 @@ void setDACValue(ButtonGPIO gpio, int v)
     pwm_set_gpio_level(pin, v);
 }
 
+namespace
+{
+    auto *i2cIF_ = i2c1;
+    device::PCA9555 pca95555MPExt_;
+}
+
+void initDevices()
+{
+    LCD::instance().waitForNonBlocking();
+
+    // Multiplayer ext
+    constexpr uint8_t MPEXT_SUBADDR = 7;
+    pca95555MPExt_.init(i2cIF_, MPEXT_SUBADDR);
+
+    //    LCD::instance().setDisplayOnOff(false);
+    //    LCD::instance().setDisplayOnOff(true);
+}
+
 bool powerOn()
 {
     // check Power good
@@ -864,6 +932,8 @@ bool powerOn()
         gpio_put(POWER_EN_PIN, true);
         printf("power on\n");
 
+        initDevices();
+
         PadManager::instance().reset();
         PadManager::instance().enterNormalMode();
         vsyncDetector_.reset();
@@ -878,6 +948,8 @@ bool powerOn()
             setRapidPhaseMask();
             setRapidSettings();
         }
+
+        tusb_init();
     }
     else
     {
@@ -902,6 +974,8 @@ void powerOff()
     }
     vsyncDetector_.setEnableFPSCount(false);
 
+    tuh_deinit(0);
+
     printf("power off\n");
     if (HAS_LCD)
     {
@@ -910,6 +984,37 @@ void powerOff()
         textScreen_.clearAll();
         textScreen_.printInfo(0, 0, "PowerOff");
         textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
+    }
+}
+
+void i2cTest()
+{
+    // check Power good
+    gpio_init(PDPG_PIN);
+    gpio_set_dir(PDPG_PIN, GPIO_IN);
+    gpio_set_pulls(PDPG_PIN, true, false);
+    sleep_ms(100);
+
+    bool powerGood = !gpio_get(PDPG_PIN);
+
+    gpio_set_pulls(PDPG_PIN, false, false);
+    gpio_set_function(PDPG_PIN, GPIO_FUNC_UART);
+    sleep_ms(100);
+
+    assert(powerGood);
+    if (!powerGood)
+    {
+        exit(-1);
+    }
+
+    gpio_put(POWER_EN_PIN, true);
+    printf("power on\n");
+
+    sleep_ms(200);
+
+    while (1)
+    {
+        initDevices();
     }
 }
 
@@ -943,7 +1048,7 @@ int main()
 
     DPRINT(("start.\n"));
 
-    tusb_init();
+    // tusb_init();
 
     auto initOutputPin = [](int pin)
     {
@@ -968,20 +1073,23 @@ int main()
         }
     }
 
-    auto *i2cIF = i2c1;
+    constexpr bool enableI2C = HAS_LCD;
 
     // I2C
-    if (HAS_LCD)
+    if (enableI2C)
     {
-        i2c_init(i2cIF, 400000);
-        // i2c_init(i2cIF, 4000);
+        i2c_init(i2cIF_, 400000);
+        // i2c_init(i2cIF_, 4000);
         gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
         gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
 
+        // LCD
         auto &lcd = LCD::instance();
         DPRINT(("I2C init...\n"));
-        lcd.init(i2cIF);
+        lcd.init(i2cIF_);
         DPRINT(("I2C init done.\n"));
+
+        // i2cTest();
 
         textScreen_.clearAll();
         textScreen_.printInfo(0, 0, BOARD_NAME);
@@ -999,7 +1107,9 @@ int main()
 
     // initDACPWM();
 
+#ifdef NDEBUG
     watchdog_enable(5000, true);
+#endif
 
     bool prevBtCnf = false;
     bool prevBtCnfMiddle = false;
@@ -1124,6 +1234,7 @@ int main()
                         {
                             if (ast.mask & (1u << i))
                             {
+                                printf("v%d:%d\n", i, ast.values[i]);
                                 setDACValue(analogPortMap_[port][i], ast.values[i]);
                             }
                         }

@@ -121,9 +121,10 @@ int8_t PadConfig::convertAnalog(int i, const uint32_t *buttons, int nButtons,
     return 0;
 }
 
-PadConfig::PadConfig(int vid, int pid, const std::vector<Unit> &buttons,
+PadConfig::PadConfig(int vid, int pid, int outPortOfs,
+                     const std::vector<Unit> &buttons,
                      const std::vector<Unit> &analogs)
-    : buttons_(buttons), analogs_(analogs), vid_(vid), pid_(pid)
+    : buttons_(buttons), analogs_(analogs), vid_(vid), pid_(pid), outPortOfs_(outPortOfs)
 {
 }
 
@@ -151,6 +152,7 @@ void PadConfig::serialize(Serializer &s) const
 {
     s.append16u(vid_);
     s.append16u(pid_);
+    s.append8u(outPortOfs_);
 
     auto writeUnit = [&](const Unit &v)
     {
@@ -161,6 +163,7 @@ void PadConfig::serialize(Serializer &s) const
         s.append8u(static_cast<uint8_t>(v.hatPos));
         s.append8u(v.index);
         s.append8u(v.subIndex);
+        s.append8u(v.inPortOfs);
     };
 
     s.append16u(buttons_.size());
@@ -180,6 +183,7 @@ PadConfig::PadConfig(Deserializer &s)
 {
     vid_ = s.peek16u();
     pid_ = s.peek16u();
+    outPortOfs_ = s.peek8u();
 
     auto readUnit = [&]()
     {
@@ -191,6 +195,7 @@ PadConfig::PadConfig(Deserializer &s)
         v.hatPos = static_cast<HatPos>(s.peek8u());
         v.index = s.peek8u();
         v.subIndex = s.peek8u();
+        v.inPortOfs = s.peek8u();
         return v;
     };
 
@@ -268,9 +273,9 @@ void PadTranslator::reset()
     configs_.clear();
 }
 
-PadConfig *PadTranslator::_find(int vid, int pid)
+PadConfig *PadTranslator::_find(int vid, int pid, int portOfs)
 {
-    std::pair<int, int> id{vid, pid};
+    PadConfig::DeviceID id{vid, pid, portOfs};
     auto p = std::partition_point(configs_.begin(), configs_.end(),
                                   [&](const PadConfig &v)
                                   { return v.getDeviceID() < id; });
@@ -281,9 +286,9 @@ PadConfig *PadTranslator::_find(int vid, int pid)
     return nullptr;
 }
 
-const PadConfig *PadTranslator::find(int vid, int pid) const
+const PadConfig *PadTranslator::find(int vid, int pid, int portOfs) const
 {
-    auto p = const_cast<PadTranslator *>(this)->_find(vid, pid);
+    auto p = const_cast<PadTranslator *>(this)->_find(vid, pid, portOfs);
     return p ? p : &defaultConfig_;
 }
 
@@ -297,14 +302,14 @@ void PadTranslator::append(PadConfig &&cnf)
 {
     cnf.dump();
 
-    if (auto *p = _find(cnf.getVID(), cnf.getPID()))
+    if (auto *p = _find(cnf.getVID(), cnf.getPID(), cnf.getOutPortOfs()))
     {
-        DPRINT(("replace config %04x, %04x\n", cnf.getVID(), cnf.getPID()));
+        DPRINT(("replace config %04x, %04x, %d\n", cnf.getVID(), cnf.getPID(), cnf.getOutPortOfs()));
         *p = std::move(cnf);
     }
     else
     {
-        DPRINT(("new config %04x, %04x\n", cnf.getVID(), cnf.getPID()));
+        DPRINT(("new config %04x, %04x, %d\n", cnf.getVID(), cnf.getPID(), cnf.getOutPortOfs()));
         configs_.push_back(std::move(cnf));
         sort();
     }

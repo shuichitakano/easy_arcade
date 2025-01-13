@@ -92,14 +92,14 @@ uint32_t PadState::getButtons() const
 }
 
 bool PadState::set(const PadTranslator &translator,
-                   int vid, int pid,
+                   int vid, int pid, int portOfs,
                    const uint32_t *buttons, int nButtons,
                    const int *analogs, int nAnalogs, int hat)
 {
     mappedButtonsPrev_ = mappedButtons_;
     unmappedButtonsPrev_ = unmappedButtons_;
 
-    if (auto *cfg = translator.find(vid, pid))
+    if (auto *cfg = translator.find(vid, pid, portOfs))
     {
         {
             uint32_t mapped = 0;

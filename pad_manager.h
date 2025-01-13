@@ -16,21 +16,22 @@
 #include "serializer.h"
 #include <functional>
 
-inline static constexpr size_t N_PAD_STATE_BUTTONS = static_cast<size_t>(PadStateButton::MAX);
-
 class PadManager
 {
 public:
     static constexpr int N_ANALOGS = 9;
     static constexpr int N_BUTTONS = 128;
 
-    static constexpr int N_PORTS = 3;
-    static constexpr int N_OUTPUT_PORTS = 2;
+    static constexpr int N_PORTS = 5;
+    static constexpr int N_OUTPUT_PORTS = 4;
+    static constexpr int N_ENCODER_PORTS = 2;
 
     enum class StateKind
     {
         PORT0,
         PORT1,
+        PORT2,
+        PORT3,
         MIDI,
     };
 
@@ -110,6 +111,8 @@ public:
 
     void resetConfig() { translator_.reset(); }
     void setRotEncSetting(int kind, int axis, int scale);
+
+    void setTwinPortMode(bool f) { twinPortMode_ = f; }
 
 protected:
     uint32_t _getButtons(int port) const;
@@ -198,6 +201,8 @@ private:
     bool enableLED_ = true;
 
     bool normalModeLED_ = true;
+
+    bool twinPortMode_ = false;
 
     PadTranslator translator_;
 

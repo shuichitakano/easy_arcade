@@ -23,7 +23,7 @@ extern "C"
 #define CFG_TUSB_MEM_SECTION
 #define CFG_TUSB_MEM_ALIGN __attribute__((aligned(4)))
 
-#define CFG_TUH_ENUMERATION_BUFSZIE 256
+    // #define CFG_TUH_ENUMERATION_TIMEOUT 5000
 
 #define CFG_TUH_HUB 2
 #define CFG_TUH_CDC 0

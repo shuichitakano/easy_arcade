@@ -14,6 +14,7 @@ void AppConfig::serialize(Serializer &s)
     s.append8u(buttonDispMode);
     s.append8u(backLight);
     s.append8u(rapidModeSynchro);
+    s.append8u(synchroFetchPhase);
     s.append8u(softwareRapidSpeed);
     for (int i = 0; i < 6; ++i)
     {
@@ -30,6 +31,7 @@ void AppConfig::serialize(Serializer &s)
         s.append16u(re.scale);
         s.append8u(re.axis);
     }
+    s.append8u(twinPortMode);
     s.append8u(nAnalogAxis);
 }
 
@@ -45,6 +47,7 @@ bool AppConfig::deserialize(Deserializer &s)
     buttonDispMode = s.peek8u();
     backLight = s.peek8u();
     rapidModeSynchro = s.peek8u();
+    synchroFetchPhase = s.peek8u();
     softwareRapidSpeed = s.peek8u();
     for (int i = 0; i < 6; ++i)
     {
@@ -61,6 +64,7 @@ bool AppConfig::deserialize(Deserializer &s)
         re.scale = s.peek16u();
         re.axis = s.peek8u();
     }
+    twinPortMode = s.peek8u();
     nAnalogAxis = s.peek8u();
 
     return true;

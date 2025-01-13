@@ -25,7 +25,23 @@ enum class PadStateButton
     E,
     F,
     MAX,
+
+    COIN_2P = MAX,
+    START_2P,
+    UP_2P,
+    DOWN_2P,
+    LEFT_2P,
+    RIGHT_2P,
+    A_2P,
+    B_2P,
+    C_2P,
+    D_2P,
+    E_2P,
+    F_2P,
+    MAX_2P,
 };
+
+inline static constexpr int N_PAD_STATE_BUTTONS = static_cast<int>(PadStateButton::MAX);
 
 class PadState
 {
@@ -41,7 +57,7 @@ public:
 
 public:
     bool set(const PadTranslator &,
-             int vid, int pid,
+             int vid, int pid, int portOfs,
              const uint32_t *buttons, int nButtons,
              const int *analogs, int nAnalogs, int hat);
 
