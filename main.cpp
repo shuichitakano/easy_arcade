@@ -1214,6 +1214,16 @@ int main()
                 for (int port = 0; port < 2; ++port)
                 {
                     auto st = padManager.getButtons(port);
+#if !defined(NDEBUG) && 0
+                    if (port == 0)
+                    {
+                        for (int i = 0; i < (int)PadStateButton::MAX; ++i)
+                        {
+                            printf("%c", st & (1u << i) ? '1' : '0');
+                        }
+                        printf(("\n"));
+                    }
+#endif
                     if (REVERSE_STATE)
                     {
                         st = ~st;

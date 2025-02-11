@@ -56,16 +56,22 @@ void PadState::update()
     }
 
     // それぞれのフェーズの連射ボタン押下状態を更新
-    auto base = ~rapidFireMask_;
-    auto maskA = base | (rapidFireMask_ & rapidFirePhase_);
-    auto maskB = base | (rapidFireMask_ & (~rapidFirePhase_));
     uint32_t mmA = 0, mmB = 0;
     uint32_t mm = 0;
     for (int i = 0; i < nMapButtons_; ++i)
     {
-        mmA |= (maskA & (1u << i)) ? buttonMap_[i] : 0;
-        mmB |= (maskB & (1u << i)) ? buttonMap_[i] : 0;
-        mm |= rapidFireMask_ & (1u << i) ? buttonMap0_[i] : 0;
+        auto b = buttonMap_[i];
+        if (rapidFireMask_ & (1u << i))
+        {
+            mmA |= b & rapidFirePhase_;
+            mmB |= b & ~rapidFirePhase_;
+            mm |= buttonMap0_[i];
+        }
+        else
+        {
+            mmA |= b;
+            mmB |= b;
+        }
     }
     mappedButtonsRapidA_ = mmA;
     mappedButtonsRapidB_ = mmB;
@@ -75,17 +81,24 @@ void PadState::update()
 uint32_t PadState::getButtons() const
 {
     bool rapidFire = (vsyncCount_ / std::max(1, rapidFireDiv_)) & 1;
-    uint32_t rapidMask = rapidFire ? 0xffffffff : 0;
+    const uint32_t rapidMask = rapidFire ? 0xffffffff : 0;
 
-    auto maskA = rapidMask & rapidFirePhase_;
-    auto maskB = (~rapidMask) & (~rapidFirePhase_);
-
-    auto m = rapidFireMask_ & (maskA | maskB); // マップ前のボタンに対する連射マスク
+    const auto maskA = rapidMask & rapidFirePhase_;
+    const auto maskB = (~rapidMask) & (~rapidFirePhase_);
+    const auto maskAB = maskA | maskB;
 
     uint32_t r = 0;
     for (int i = 0; i < nMapButtons_; ++i)
     {
-        r |= (m & (1u << i)) ? 0 : buttonMap_[i];
+        auto b = buttonMap_[i];
+        if (rapidFireMask_ & (1u << i))
+        {
+            r |= b & maskAB;
+        }
+        else
+        {
+            r |= b;
+        }
     }
 
     return r;

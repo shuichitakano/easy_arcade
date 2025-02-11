@@ -18,8 +18,8 @@ namespace
         i2c->hw->enable = 1;
     }
 
-    void writeI2CNonBloking(i2c_inst_t *i2c,
-                            const uint8_t *data, size_t size)
+    void writeI2CNonBlocking(i2c_inst_t *i2c,
+                             const uint8_t *data, size_t size)
     {
         if (size < 1)
         {
@@ -137,14 +137,14 @@ void LCD::writeInstructionNonBlocking(uint8_t cmd)
 {
     setAddrForNonBlocking();
     std::array<uint8_t, 2> buf = {0x00, cmd};
-    writeI2CNonBloking(i2c_, buf.data(), buf.size());
+    writeI2CNonBlocking(i2c_, buf.data(), buf.size());
 }
 
 void LCD::writeDataNonBlocking(uint8_t data)
 {
     setAddrForNonBlocking();
     std::array<uint8_t, 2> buf = {0x40, data};
-    writeI2CNonBloking(i2c_, buf.data(), buf.size());
+    writeI2CNonBlocking(i2c_, buf.data(), buf.size());
 }
 
 void LCD::locateNonBlocking(int x, int y)
@@ -166,7 +166,7 @@ bool LCD::printNonBlocking(int x, int y, const char *s, int n)
 
     locateNonBlocking(x, y);
     i2c_write_byte_raw(i2c_, 0x40);
-    writeI2CNonBloking(i2c_, reinterpret_cast<const uint8_t *>(s), n);
+    writeI2CNonBlocking(i2c_, reinterpret_cast<const uint8_t *>(s), n);
     return true;
 }
 
@@ -180,7 +180,7 @@ bool LCD::defineCharNonBlocking(int n, const uint8_t *data)
     writeInstructionNonBlocking(0x40 | (n << 3));
 
     i2c_write_byte_raw(i2c_, 0x40);
-    writeI2CNonBloking(i2c_, data, 8);
+    writeI2CNonBlocking(i2c_, data, 8);
     return true;
 }
 

@@ -370,6 +370,11 @@ void PadManager::saveConfigAndExit()
                 {
                     u.index = index;
                     units[0].push_back(u);
+                    if (index == static_cast<int>(PadStateButton::CMD))
+                    {
+                        // CMDは共通で入れる
+                        units[1].push_back(u);
+                    }
                 }
                 else if (twinPortMode_)
                 {
@@ -572,8 +577,10 @@ void PadManager::setRapidFireDiv(int port, int v)
 
 void PadManager::setRapidFirePhaseMask(uint32_t v)
 {
-    padStates_[0].setRapidFirePhaseMask(v);
-    padStates_[0].setRapidFirePhaseMask(v);
+    for (auto &s : padStates_)
+    {
+        s.setRapidFirePhaseMask(v);
+    }
 }
 
 void PadManager::serialize(Serializer &s) const
