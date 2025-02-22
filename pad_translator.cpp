@@ -73,6 +73,15 @@ bool PadConfig::Unit::testAnalog(uint8_t v) const
     return d0 * d0 > d1 * d1;
 }
 
+int PadConfig::Unit::getAnalog(int v) const
+{
+    int lv0 = getLevel(analogOff);
+    int lv1 = getLevel(analogOn);
+
+    return std::clamp((v - lv0) * ANALOG_MAX_VAL / (lv1 - lv0),
+                      0, ANALOG_MAX_VAL);
+}
+
 void PadConfig::Unit::dump() const
 {
     constexpr char typeTable[] = {'-', 'B', 'A', 'H'};
@@ -114,11 +123,31 @@ bool PadConfig::convertButton(int i, const uint32_t *buttons, int nButtons,
     return false;
 }
 
-int8_t PadConfig::convertAnalog(int i, const uint32_t *buttons, int nButtons,
-                                const int *analogs, int nAnalogs, int hat) const
+std::optional<int>
+PadConfig::convertAnalog(int i, const uint32_t *buttons, int nButtons,
+                         const int *analogs, int nAnalogs, int hat) const
 {
-    // todo
-    return 0;
+    if (static_cast<size_t>(i) >= analogs_.size())
+    {
+        return {};
+    }
+    const auto &cfg = analogs_[i];
+
+    switch (cfg.type)
+    {
+    case Type::BUTTON:
+        return buttons[cfg.number >> 5] & (1u << (cfg.number & 31)) ? ANALOG_MAX_VAL : 0;
+
+    case Type::ANALOG:
+        return cfg.getAnalog(analogs[cfg.number]);
+
+    case Type::HAT:
+        return testHat(hat, cfg.hatPos) ? ANALOG_MAX_VAL : 0;
+
+    default:
+        break;
+    }
+    return {};
 }
 
 PadConfig::PadConfig(int vid, int pid, int outPortOfs,
@@ -298,14 +327,25 @@ void PadTranslator::sort()
               { return a.getDeviceID() < b.getDeviceID(); });
 }
 
-void PadTranslator::append(PadConfig &&cnf)
+void PadTranslator::append(PadConfig &&cnf, bool buttons, bool analogs)
 {
     cnf.dump();
 
     if (auto *p = _find(cnf.getVID(), cnf.getPID(), cnf.getOutPortOfs()))
     {
         DPRINT(("replace config %04x, %04x, %d\n", cnf.getVID(), cnf.getPID(), cnf.getOutPortOfs()));
-        *p = std::move(cnf);
+        if (buttons && analogs)
+        {
+            *p = std::move(cnf);
+        }
+        else if (buttons)
+        {
+            p->setButtonUnits(std::move(cnf.getButtonUnits()));
+        }
+        else if (analogs)
+        {
+            p->setAnalogUnits(std::move(cnf.getAnalogUnits()));
+        }
     }
     else
     {

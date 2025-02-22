@@ -134,21 +134,42 @@ bool PadState::set(const PadTranslator &translator,
             nMapButtons_ = n;
         }
         {
-            auto n = std::min<int>(MAX_ANALOGS, cfg->getAnalogCount());
+            std::optional<int> values[N_PAD_CONFIG_ANALOGS];
+            const auto n = cfg->getAnalogCount();
             for (auto i = 0u; i < n; ++i)
             {
-                auto v = cfg->convertAnalog(i, buttons, nButtons, analogs, nAnalogs, hat);
+                const auto &unit = cfg->getAnalogUnit(i);
+                values[unit.index] = cfg->convertAnalog(i, buttons, nButtons, analogs, nAnalogs, hat);
+
+                // todo: ボタン複数アサインの時の振る舞い
+            }
+
+            auto computeValue = [](std::optional<int> h, std::optional<int> l)
+                -> std::tuple<int, bool>
+            {
+                if (h && l)
+                {
+                    return {(h.value() - l.value() + ANALOG_MAX_VAL) >> 1, true};
+                }
+                else if (h)
+                {
+                    return {h.value(), false};
+                }
+                else if (l)
+                {
+                    return {ANALOG_MAX_VAL - l.value(), false};
+                }
+                return {};
+            };
+
+            for (int i = 0; i < MAX_ANALOGS; ++i)
+            {
+                auto [v, hasCenter] = computeValue(values[i * 2 + 0],
+                                                   values[i * 2 + 1]);
                 analog_.values[i] = v;
+                analog_.hasCenter[i] = hasCenter;
             }
         }
-
-#if 0
-        // kari
-        analog_.mask = 7;
-        analog_.values[0] = analogs[0];
-        analog_.values[1] = 255 - analogs[1];
-        analog_.values[2] = 255 - analogs[5];
-#endif
 
         // dump();
         update();

@@ -14,7 +14,9 @@
 #include "pad_state.h"
 #include "rot_encoder.h"
 #include "serializer.h"
+#include "app_config.h"
 #include <functional>
+#include <memory>
 
 class PadManager
 {
@@ -58,6 +60,7 @@ public:
     };
 
     using PrintButtonFunc = std::function<void(PadStateButton)>;
+    using PrintCnfAnalogFunc = std::function<void(PadConfigAnalog)>;
     using onExitConfigFunc = std::function<void()>;
     using onSaveFunc = std::function<void()>;
 
@@ -98,47 +101,69 @@ public:
 
     void enterNormalMode();
     void enterConfigMode();
-    void setNormalModeLED(bool f) { normalModeLED_ = f; }
+    void enterAnalogConfigMode();
 
-    bool isConfigMode() const { return mode_ == Mode::CONFIG; }
+    void setNormalModeLED(bool f)
+    {
+        normalModeLED_ = f;
+    }
 
-    void setEnableModelChangeByButton(bool f) { enableModeChangeByButton_ = f; }
-    void setEnableLED(bool f) { enableLED_ = f; }
+    bool isNormalMode() const
+    {
+        return !modeHandler_;
+    }
 
-    void setPrintButtonFunc(PrintButtonFunc f) { printButtonFunc_ = f; }
-    void setOnExitConfigFunc(onExitConfigFunc f) { onExitConfigFunc_ = f; }
-    void setOnSaveFunc(onSaveFunc f) { onSaveFunc_ = f; }
+    void setEnableModelChangeByButton(bool f)
+    {
+        enableModeChangeByButton_ = f;
+    }
+    void setEnableLED(bool f)
+    {
+        enableLED_ = f;
+    }
 
-    void resetConfig() { translator_.reset(); }
+    void setPrintButtonFunc(PrintButtonFunc f)
+    {
+        printButtonFunc_ = f;
+    }
+    void setPrintCnfAnalogFunc(PrintCnfAnalogFunc f)
+    {
+        printCnfAnalogFunc_ = f;
+    }
+    void setOnExitConfigFunc(onExitConfigFunc f)
+    {
+        onExitConfigFunc_ = f;
+    }
+    void setOnSaveFunc(onSaveFunc f)
+    {
+        onSaveFunc_ = f;
+    }
+
+    void resetConfig()
+    {
+        translator_.reset();
+    }
     void setRotEncSetting(int kind, int axis, int scale);
 
-    void setTwinPortMode(bool f) { twinPortMode_ = f; }
+    void setTwinPortMode(bool f)
+    {
+        twinPortMode_ = f;
+    }
+
+    void setAnalogMode(AppConfig::AnalogMode mode)
+    {
+        analogMode_ = mode;
+    }
 
 protected:
-    uint32_t _getButtons(int port) const;
-
-    void updateNormalMode(int dclk, bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
-    void updateConfigMode(int dclk, bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong);
-
-    void setDataNormalMode(int port, const PadInput &input);
-    void setDataConfigMode(int port, const PadInput &input);
-
-    void nextButtonConfig();
-    void saveConfigAndExit();
-
-    void blinkLED(bool reverse, int n);
-    void setLED(bool on) const;
-
-private:
-    enum class Mode
+    class ModeHandler
     {
-        NORMAL,
-        CONFIG,
+    public:
+        virtual ~ModeHandler() = default;
+        virtual void init(PadManager &mgr) = 0;
+        virtual void update(PadManager &mgr, int dclk, bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong) = 0;
+        virtual void setData(PadManager &mgr, int port, const PadInput &input) = 0;
     };
-
-    std::array<PadInput, N_PORTS> latestPadData_;
-    std::array<PadState, N_PORTS> padStates_;
-    RotEncoder rotEncoders_[N_OUTPUT_PORTS][2];
 
     struct ButtonSet
     {
@@ -146,7 +171,7 @@ private:
         std::array<uint32_t, N_BUTTONS / 32> buttons;
 
         // アナログのアサインは1つ
-        int8_t analogIndex;
+        int8_t analogIndex = -1;
         PadConfig::AnalogPos analogOn;
         PadConfig::AnalogPos analogOff;
 
@@ -157,6 +182,15 @@ private:
         ButtonSet() { clear(); }
 
         bool getButton(int i) const { return (buttons[i >> 5] & (1u << (i & 31))); }
+
+        void filterForAnalog()
+        {
+            if (analogIndex >= 0)
+            {
+                buttons = {};
+                hat = -1;
+            }
+        }
 
         bool hasData() const
         {
@@ -178,24 +212,67 @@ private:
         }
     };
 
-    struct ConfigMode
+    class ButtonConfigMode : public ModeHandler
     {
+    protected:
         bool waitFirstIdle_ = true; // 最初にボタン入力がない瞬間を待ち中
         int port_ = -1;
         std::array<int, N_ANALOGS> analogNeutral_[N_PORTS]{};
         int vid_ = 0;
         int pid_ = 0;
 
-        PadStateButton curButton_{}; // 現在設定中のボタン
+        int curButton_{}; // 現在設定中のボタン
         ButtonSet curButtonSet_;
         bool anyButtonOn_ = false;
         uint32_t idleCycle_ = 0;
 
         std::vector<ButtonSet> buttonSets_;
+
+    public:
+        void init(PadManager &mgr) override;
+        void update(PadManager &mgr, int dclk, bool cnfButton, bool cnfButtonTrigger, bool cnfButtonLong) override;
+        void setData(PadManager &mgr, int port, const PadInput &input) override;
+
+    protected:
+        virtual void next(PadManager &mgr);
+        void saveAndExit(PadManager &mgr);
+
+        virtual void printMessage(const PadManager &mgr) const;
+        virtual int nButtons(const PadManager &mgr) const;
+        virtual void appendUnit(const PadManager &mgr,
+                                std::vector<PadConfig::Unit> units[2],
+                                PadConfig::Unit &u,
+                                int index);
+        virtual void registerUnits(PadManager &mgr,
+                                   std::vector<PadConfig::Unit> units[2]);
     };
 
-    Mode mode_{};
-    ConfigMode configMode_;
+    class AnalogConfigMode : public ButtonConfigMode
+    {
+    protected:
+        void next(PadManager &mgr) override;
+
+        void printMessage(const PadManager &mgr) const override;
+        int nButtons(const PadManager &mgr) const override;
+        void appendUnit(const PadManager &mgr,
+                        std::vector<PadConfig::Unit> units[2],
+                        PadConfig::Unit &u,
+                        int index) override;
+        void registerUnits(PadManager &mgr,
+                           std::vector<PadConfig::Unit> units[2]) override;
+    };
+
+    uint32_t _getButtons(int port) const;
+
+    void blinkLED(bool reverse, int n) const;
+    void setLED(bool on) const;
+
+private:
+    std::array<PadInput, N_PORTS> latestPadData_;
+    std::array<PadState, N_PORTS> padStates_;
+    RotEncoder rotEncoders_[N_OUTPUT_PORTS][2];
+
+    std::unique_ptr<ModeHandler> modeHandler_;
 
     bool enableModeChangeByButton_ = true;
     bool enableLED_ = true;
@@ -203,10 +280,12 @@ private:
     bool normalModeLED_ = true;
 
     bool twinPortMode_ = false;
+    AppConfig::AnalogMode analogMode_{};
 
     PadTranslator translator_;
 
     PrintButtonFunc printButtonFunc_;
+    PrintCnfAnalogFunc printCnfAnalogFunc_;
     onExitConfigFunc onExitConfigFunc_;
     onSaveFunc onSaveFunc_;
 };

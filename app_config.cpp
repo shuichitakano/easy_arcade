@@ -32,7 +32,13 @@ void AppConfig::serialize(Serializer &s)
         s.append8u(re.axis);
     }
     s.append8u(twinPortMode);
-    s.append8u(nAnalogAxis);
+    s.append8u(analogMode);
+    for (auto &v : analogSettings)
+    {
+        s.append8i(v.sensitivity);
+        s.append8i(v.offset);
+        s.append8u(v.scale);
+    }
 }
 
 bool AppConfig::deserialize(Deserializer &s)
@@ -65,7 +71,13 @@ bool AppConfig::deserialize(Deserializer &s)
         re.axis = s.peek8u();
     }
     twinPortMode = s.peek8u();
-    nAnalogAxis = s.peek8u();
+    analogMode = s.peek8u();
+    for (auto &v : analogSettings)
+    {
+        v.sensitivity = s.peek8i();
+        v.offset = s.peek8i();
+        v.scale = s.peek8u();
+    }
 
     return true;
 }

@@ -14,7 +14,7 @@ inline constexpr uint32_t CPU_CLOCK = 125000000;
 #if EA_V2
 
 #define BOARD_NAME "EA2"
-#define BOARD_VERSION "V1.1.1"
+#define BOARD_VERSION "V1.2.0"
 
 // * v1.0.2
 //  - All Reset メニューでロータリーエンコーダの初期化反映が漏れていたのを修正
@@ -26,7 +26,9 @@ inline constexpr uint32_t CPU_CLOCK = 125000000;
 //  - 電源のON/OFF時にUSBの初期化を行うようにした
 //  - USBハブサポートを追加
 
-// * v1.1.1
+// * v1.2.0
+//  - マルチプレイヤーアダプタ対応
+//  - アナログアダプタ対応
 //  - Port 1 にしか連射フェーズ設定が効かないのを修正
 //  - 連射Phaseが全くバグっていたのを修正
 //  - 2 Port Mode で CMD を 1P/2P 共通にした

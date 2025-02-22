@@ -11,19 +11,17 @@
 class LCD
 {
 public:
-    void init(i2c_inst_t *i2c);
+    void init();
     void puts(const char *s);
     void locate(int x, int y);
     void clear();
     void defineChar(int n, const uint8_t *data);
     void setContrast(int v);
 
-    int getAvailableNonBlockingSize();
     void putCharNonBlocking(char ch);
     void locateNonBlocking(int x, int y);
     bool printNonBlocking(int x, int y, const char *s, int n);
     bool defineCharNonBlocking(int n, const uint8_t *data);
-    void waitForNonBlocking();
 
     void setDisplayOnOff(bool on); // non block 待ちする
 
@@ -35,13 +33,7 @@ protected:
 
     void writeInstructionNonBlocking(uint8_t cmd);
     void writeDataNonBlocking(uint8_t data);
-    void setAddrForNonBlocking();
-
-    void _waitForNonBlocking();
 
 private:
-    i2c_inst_t *i2c_{};
-    bool needSetAddr_ = true;
-
     bool dispOn_ = false;
 };

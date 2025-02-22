@@ -4,50 +4,14 @@
  */
 
 #include "lcd.h"
+#include "i2c_manager.h"
 #include <cassert>
 #include <array>
 
 namespace
 {
     inline constexpr uint8_t LCD_ADDR = 0x7c >> 1;
-
-    void enableI2CAddr(i2c_inst_t *i2c, uint8_t addr)
-    {
-        i2c->hw->enable = 0;
-        i2c->hw->tar = addr;
-        i2c->hw->enable = 1;
-    }
-
-    void writeI2CNonBlocking(i2c_inst_t *i2c,
-                             const uint8_t *data, size_t size)
-    {
-        if (size < 1)
-        {
-            return;
-        }
-
-        assert(i2c_get_write_available(i2c) >= size);
-        for (size_t i = 0; i < size - 1; ++i)
-        {
-            i2c->hw->data_cmd = data[i];
-        }
-        i2c->hw->data_cmd = data[size - 1] | I2C_IC_DATA_CMD_STOP_BITS;
-    }
-
-    void waitForI2CNonBlocking(i2c_inst_t *i2c)
-    {
-        // while (i2c->hw->raw_intr_stat & I2C_IC_RAW_INTR_STAT_STOP_DET_BITS)
-        while (!(i2c->hw->raw_intr_stat & I2C_IC_RAW_INTR_STAT_TX_EMPTY_BITS))
-        {
-            tight_loop_contents();
-        }
-    }
-
-    bool isI2CBusy(i2c_inst_t *i2c)
-    {
-        return !(i2c->hw->raw_intr_stat & I2C_IC_RAW_INTR_STAT_TX_EMPTY_BITS);
-        // return i2c->hw->status & I2C_IC_STATUS_ACTIVITY_BITS;
-    } // namespace
+    inline constexpr int I2C_PRIO = 0;
 }
 
 LCD &LCD::instance()
@@ -56,11 +20,8 @@ LCD &LCD::instance()
     return lcd;
 }
 
-void LCD::init(i2c_inst_t *i2c)
+void LCD::init()
 {
-    i2c_ = i2c;
-    assert(i2c_);
-
     sleep_ms(40);
 
     uint8_t data[] = {
@@ -84,16 +45,14 @@ void LCD::init(i2c_inst_t *i2c)
 void LCD::writeInstruction(uint8_t cmd)
 {
     std::array<uint8_t, 2> buf = {0x00, cmd};
-    i2c_write_blocking(i2c_, LCD_ADDR, buf.data(), buf.size(), false);
+    getI2CManager().sendBlocking(LCD_ADDR, buf.data(), buf.size());
     sleep_us(27);
-    needSetAddr_ = true;
 }
 
 void LCD::writeData(uint8_t data)
 {
     std::array<uint8_t, 2> buf = {0x40, data};
-    i2c_write_blocking(i2c_, LCD_ADDR, buf.data(), buf.size(), false);
-    needSetAddr_ = true;
+    getI2CManager().sendBlocking(LCD_ADDR, buf.data(), buf.size());
 }
 
 void LCD::puts(const char *s)
@@ -128,23 +87,16 @@ void LCD::defineChar(int n, const uint8_t *data)
     }
 }
 
-int LCD::getAvailableNonBlockingSize()
-{
-    return i2c_get_write_available(i2c_) / 2;
-}
-
 void LCD::writeInstructionNonBlocking(uint8_t cmd)
 {
-    setAddrForNonBlocking();
     std::array<uint8_t, 2> buf = {0x00, cmd};
-    writeI2CNonBlocking(i2c_, buf.data(), buf.size());
+    getI2CManager().sendNonBlocking(I2C_PRIO, LCD_ADDR, buf.data(), buf.size());
 }
 
 void LCD::writeDataNonBlocking(uint8_t data)
 {
-    setAddrForNonBlocking();
     std::array<uint8_t, 2> buf = {0x40, data};
-    writeI2CNonBlocking(i2c_, buf.data(), buf.size());
+    getI2CManager().sendNonBlocking(I2C_PRIO, LCD_ADDR, buf.data(), buf.size());
 }
 
 void LCD::locateNonBlocking(int x, int y)
@@ -159,62 +111,48 @@ void LCD::putCharNonBlocking(char ch)
 
 bool LCD::printNonBlocking(int x, int y, const char *s, int n)
 {
-    if (i2c_get_write_available(i2c_) < 2 + 1 + n)
+    auto &i2c = getI2CManager();
+    if (!i2c.reserve(I2C_PRIO, LCD_ADDR, 2 + 1 + n))
     {
         return false;
     }
 
     locateNonBlocking(x, y);
-    i2c_write_byte_raw(i2c_, 0x40);
-    writeI2CNonBlocking(i2c_, reinterpret_cast<const uint8_t *>(s), n);
+
+    // i2c_write_byte_raw(i2c_, 0x40);
+    uint8_t cmd = 0x40;
+    i2c.sendNonBlockingUnsafe(LCD_ADDR, &cmd, 1, true);
+    i2c.sendNonBlockingUnsafe(LCD_ADDR, reinterpret_cast<const uint8_t *>(s), n);
     return true;
 }
 
 bool LCD::defineCharNonBlocking(int n, const uint8_t *data)
 {
-    if (i2c_get_write_available(i2c_) < 2 + 9)
+    auto &i2c = getI2CManager();
+    if (!i2c.reserve(I2C_PRIO, LCD_ADDR, 2 + 9))
     {
         return false;
     }
 
     writeInstructionNonBlocking(0x40 | (n << 3));
 
-    i2c_write_byte_raw(i2c_, 0x40);
-    writeI2CNonBlocking(i2c_, data, 8);
+    uint8_t cmd = 0x40;
+    i2c.sendNonBlockingUnsafe(LCD_ADDR, &cmd, 1, true);
+    i2c.sendNonBlockingUnsafe(LCD_ADDR, data, 8);
     return true;
-}
-
-void LCD::waitForNonBlocking()
-{
-    _waitForNonBlocking();
-    needSetAddr_ = true;
-}
-
-void LCD::_waitForNonBlocking()
-{
-    waitForI2CNonBlocking(i2c_);
-}
-
-void LCD::setAddrForNonBlocking()
-{
-    if (needSetAddr_)
-    {
-        enableI2CAddr(i2c_, LCD_ADDR);
-        needSetAddr_ = false;
-    }
 }
 
 void LCD::setContrast(int v)
 {
+    writeInstruction(0x39); // function set IS=1
     writeInstruction(0x70 + (v & 15));
-    //    writeInstruction(0x54 + (v >> 4));
+    writeInstruction(0x38); // function set IS=0
 }
 
 void LCD::setDisplayOnOff(bool on)
 {
     if (dispOn_ != on)
     {
-        waitForNonBlocking();
         writeInstruction(on ? 0x0c : 0x08);
         writeInstruction(on ? 0x56 : 0x50);
 

@@ -33,7 +33,9 @@ void Menu::refresh()
 
 void Menu::update(int dclk,
                   uint32_t pad,
-                  bool menuButtonRelease, bool menuButtonLongPress)
+                  bool menuButtonPress,
+                  bool menuButtonRelease,
+                  bool menuButtonLongPress)
 {
     blinkCounter_ += dclk;
     if (blinkCounter_ >= blinkInterval_)
@@ -49,7 +51,7 @@ void Menu::update(int dclk,
         return ((pad ^ padPrev_) & pad) & (1u << static_cast<int>(b));
     };
 
-    if (menuButtonRelease)
+    if (!openLock_ && menuButtonRelease)
     {
         open_ = !open_;
         currentItem_ = 0;
@@ -62,11 +64,11 @@ void Menu::update(int dclk,
 
         if (testButton(PadStateButton::UP))
         {
-            currentItem_ = (currentItem_ + items_.size() - 1) % items_.size();
+            nextItem(false);
         }
         else if (testButton(PadStateButton::DOWN))
         {
-            currentItem_ = (currentItem_ + 1) % items_.size();
+            nextItem(true);
         }
         else if (testButton(PadStateButton::LEFT))
         {
@@ -103,6 +105,9 @@ void Menu::update(int dclk,
             }
         }
     }
+
+    // 長押し操作でのメニュークローズ後、離した時にメニューが開くのを防ぐ
+    openLock_ &= menuButtonPress;
 
     padPrev_ = pad;
 }
@@ -142,4 +147,27 @@ void Menu::render() const
         }
         textScreen_->print(7, 0, layer_, "\1");
     }
+}
+
+void Menu::nextItem(bool inc)
+{
+    int dir = inc ? 1 : -1;
+    auto prev = currentItem_;
+
+    do
+    {
+        currentItem_ = (currentItem_ + dir + items_.size()) % items_.size();
+        auto &item = items_[currentItem_];
+        if (item.conditionFunc)
+        {
+            if (item.conditionFunc())
+            {
+                break;
+            }
+        }
+        else
+        {
+            break;
+        }
+    } while (currentItem_ != prev);
 }

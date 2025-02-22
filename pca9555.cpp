@@ -5,6 +5,7 @@
 
 #include "pca9555.h"
 
+#include "i2c_manager.h"
 #include "debug.h"
 #include <cassert>
 
@@ -23,67 +24,79 @@ namespace device
             CONFIGURATION_0,
             CONFIGURATION_1,
         };
+
+        inline constexpr int I2C_PRIO = 1;
     }
 
-    void
-    PCA9555::init(i2c_inst_t *i2cInst, int addrSel)
+    bool
+    PCA9555::init(int addrSel)
     {
-        addr_ = 0b0100000 | addrSel;
+        int addr = 0b0100000 | addrSel;
+
+        addr_ = addr;
+        setPortDir(0xffff);
 
         uint8_t rxdata{};
-        // auto r = i2c_read_timeout_per_char_us(i2cInst, addr_, &rxdata, 1, false, 100);
-        auto r = i2c_read_blocking(i2cInst, addr_, &rxdata, 1, false);
+        auto r = getI2CManager().readBlocking(addr, &rxdata, 1);
 
-        DPRINT(("PCA9555 init[%02x]: %d\n", addr_, r));
-        if (r >= 0)
+        DPRINT(("PCA9555 init[%02x]: %d\n", addr, r));
+        if (r < 0)
         {
-            i2c_ = i2cInst;
+            addr_ = 0;
+            return false;
         }
-        {
-            uint8_t wd[] = {6, 0xaa};
-            i2c_write_blocking(i2cInst, addr_, wd, 2, false);
-        }
-        {
-            static uint8_t v = 0;
-            v ^= 255;
-            uint8_t wd[] = {2, v};
-            i2c_write_blocking(i2cInst, addr_, wd, 2, false);
-        }
+        addr_ = addr;
+        return true;
+    }
+
+    bool
+    PCA9555::setPortDirNonBlocking(uint16_t inputPortBits) const
+    {
+        assert(*this);
+        uint8_t data[] =
+            {
+                static_cast<uint8_t>(Command::CONFIGURATION_0),
+                static_cast<uint8_t>(inputPortBits & 0xFF),
+                static_cast<uint8_t>(inputPortBits >> 8),
+            };
+        return getI2CManager().sendNonBlocking(I2C_PRIO, addr_, data, 3);
     }
 
     void
     PCA9555::setPortDir(uint16_t inputPortBits) const
     {
-        assert(i2c_);
-        uint8_t data[] = {static_cast<uint8_t>(Command::CONFIGURATION_0), static_cast<uint8_t>(inputPortBits & 0xFF)};
-        i2c_write_blocking(i2c_, addr_, data, 2, false);
-
-        data[0] = static_cast<uint8_t>(Command::CONFIGURATION_1);
-        data[1] = static_cast<uint8_t>((inputPortBits >> 8) & 0xFF);
-        i2c_write_blocking(i2c_, addr_, data, 2, false);
+        assert(*this);
+        uint8_t data[] =
+            {
+                static_cast<uint8_t>(Command::CONFIGURATION_0),
+                static_cast<uint8_t>(inputPortBits & 0xFF),
+                static_cast<uint8_t>(inputPortBits >> 8),
+            };
+        getI2CManager().sendBlocking(addr_, data, 3, false);
     }
 
     void
     PCA9555::output(uint16_t bits) const
     {
-        assert(i2c_);
-        uint8_t data[] = {static_cast<uint8_t>(Command::OUTPUT_PORT_0), static_cast<uint8_t>(bits & 0xFF)};
-        i2c_write_blocking(i2c_, addr_, data, 2, false);
-
-        data[0] = static_cast<uint8_t>(Command::OUTPUT_PORT_1);
-        data[1] = static_cast<uint8_t>((bits >> 8) & 0xFF);
-        i2c_write_blocking(i2c_, addr_, data, 2, false);
+        assert(*this);
+        uint8_t data[] =
+            {
+                static_cast<uint8_t>(Command::OUTPUT_PORT_0),
+                static_cast<uint8_t>(bits & 0xFF),
+                static_cast<uint8_t>(bits >> 8),
+            };
+        getI2CManager().sendBlocking(addr_, data, 3, false);
     }
 
     int
     PCA9555::input() const
     {
-        assert(i2c_);
+        assert(*this);
         uint8_t cmd = static_cast<uint8_t>(Command::INPUT_PORT_0);
-        i2c_write_blocking(i2c_, addr_, &cmd, 1, true);
+        getI2CManager().sendBlocking(addr_, &cmd, 1, true);
 
-        uint8_t data[2] = {0};
-        i2c_read_blocking(i2c_, addr_, data, 2, false);
+        uint8_t data[2] = {};
+        getI2CManager().readBlocking(addr_, data, 2);
         return data[0] | (data[1] << 8);
     }
 

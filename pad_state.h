@@ -40,7 +40,6 @@ enum class PadStateButton
     F_2P,
     MAX_2P,
 };
-
 inline static constexpr int N_PAD_STATE_BUTTONS = static_cast<int>(PadStateButton::MAX);
 
 class PadState
@@ -51,8 +50,8 @@ public:
 
     struct AnalogState
     {
-        int mask = 0;
-        std::array<uint8_t, MAX_ANALOGS> values;
+        std::array<int, MAX_ANALOGS> values;
+        std::array<bool, MAX_ANALOGS> hasCenter;
     };
 
 public:

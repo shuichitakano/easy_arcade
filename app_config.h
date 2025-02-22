@@ -11,7 +11,7 @@ class Deserializer;
 
 struct AppConfig
 {
-    static inline constexpr int VERSION = 3;
+    static inline constexpr int VERSION = 4;
 
     struct RapidSetting
     {
@@ -40,12 +40,27 @@ struct AppConfig
         WHEEL,
     };
 
+    enum class AnalogMode
+    {
+        NONE,
+        _1P2P_EACH_2CH,
+        _1P_ONLY_4CH,
+    };
+
     struct RotEnc
     {
         int reverse = true;
         int scale = 50;
         int axis = 0;
     };
+
+    struct AnalogSetting
+    {
+        int sensitivity = 0;
+        int offset = 0;
+        int scale = 10;
+    };
+    static inline constexpr int ANALOG_MAX = 4;
 
     int initPowerOn = 0;
     int dispFPS = 1;
@@ -62,12 +77,31 @@ struct AppConfig
     std::array<RotEnc, 2> rotEnc{};
 
     int twinPortMode = false; // 1P, 2P混在モード
-    int nAnalogAxis = 0;
+    int analogMode = 0;
+    AnalogSetting analogSettings[ANALOG_MAX];
 
 public:
     ButtonDispMode getButtonDispMode() const
     {
         return static_cast<ButtonDispMode>(buttonDispMode);
+    }
+
+    AnalogMode getAnalogMode() const
+    {
+        return static_cast<AnalogMode>(analogMode);
+    }
+
+    int getAnalogModeChannels() const
+    {
+        switch (getAnalogMode())
+        {
+        case AnalogMode::_1P2P_EACH_2CH:
+            return 2;
+        case AnalogMode::_1P_ONLY_4CH:
+            return 4;
+        default:
+            return 0;
+        }
     }
 
     void resetRapidPhase()

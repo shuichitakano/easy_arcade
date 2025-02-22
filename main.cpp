@@ -24,6 +24,7 @@
 #include "font.h"
 #include "serializer.h"
 #include "pca9555.h"
+#include "i2c_manager.h"
 #include "debug.h"
 #include <cmath>
 
@@ -45,6 +46,8 @@ namespace
     };
     const PortMap padPortMap_[][12] = {
         {
+            {PadStateButton::COIN, ButtonGPIO::COIN1},
+            {PadStateButton::START, ButtonGPIO::START1},
             {PadStateButton::LEFT, ButtonGPIO::LEFT1},
             {PadStateButton::RIGHT, ButtonGPIO::RIGHT1},
             {PadStateButton::UP, ButtonGPIO::UP1},
@@ -55,10 +58,10 @@ namespace
             {PadStateButton::D, ButtonGPIO::D1},
             {PadStateButton::E, ButtonGPIO::E1},
             {PadStateButton::F, ButtonGPIO::F1},
-            {PadStateButton::COIN, ButtonGPIO::COIN1},
-            {PadStateButton::START, ButtonGPIO::START1},
         },
         {
+            {PadStateButton::COIN, ButtonGPIO::COIN2},
+            {PadStateButton::START, ButtonGPIO::START2},
             {PadStateButton::LEFT, ButtonGPIO::LEFT2},
             {PadStateButton::RIGHT, ButtonGPIO::RIGHT2},
             {PadStateButton::UP, ButtonGPIO::UP2},
@@ -69,16 +72,138 @@ namespace
             {PadStateButton::D, ButtonGPIO::D2},
             {PadStateButton::E, ButtonGPIO::E2},
             {PadStateButton::F, ButtonGPIO::F2},
-            {PadStateButton::COIN, ButtonGPIO::COIN2},
-            {PadStateButton::START, ButtonGPIO::START2},
         }};
+    inline static constexpr int N_PAD_PORT_MAP = 12;
+    inline static constexpr int N_PAD_PORT_MAP_WITH_MPA = 10;
 
-    const ButtonGPIO analogPortMap_[2][3] = {
-        //        {ButtonGPIO::D1, ButtonGPIO::E1, ButtonGPIO::F1},
-        //        {ButtonGPIO::D2, ButtonGPIO::E2, ButtonGPIO::F2}};
-        {ButtonGPIO::E1, ButtonGPIO::E2, ButtonGPIO::F1},
-        {ButtonGPIO::D1, ButtonGPIO::D2, ButtonGPIO::F2}};
+    const PortMap padPortMap34_[][2] = {
+        {
+            {PadStateButton::C, ButtonGPIO::E1},
+            {PadStateButton::D, ButtonGPIO::F1},
+        },
+        {
+            {PadStateButton::C, ButtonGPIO::E2},
+            {PadStateButton::D, ButtonGPIO::F2},
+        }};
 }
+
+bool __no_inline_not_in_flash_func(getBootButton)()
+{
+    const uint CS_PIN_INDEX = 1;
+    uint32_t flags = save_and_disable_interrupts();
+
+    // Set chip select to Hi-Z
+    hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
+                    GPIO_OVERRIDE_LOW << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
+                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
+
+    // Note we can't call into any sleep functions in flash right now
+    for (volatile int i = 0; i < 1000; ++i)
+        ;
+
+    bool button_state = !(sio_hw->gpio_hi_in & (1u << CS_PIN_INDEX));
+
+    // Restore the state of chip select
+    hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
+                    GPIO_OVERRIDE_NORMAL << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
+                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
+
+    restore_interrupts(flags);
+
+    return button_state;
+}
+
+class ButtonWatcher
+{
+    uint32_t prevCt{};
+    uint32_t ct32 = 0;
+    uint32_t ctCnfPush = 0;
+
+    bool prevBtCnf = false;
+    bool prevBtCnfMiddle = false;
+    bool prevBtCnfLong = false;
+
+    bool btCnf = false;
+    bool btCnfTrigger = false;
+    bool btCnfRelease = false;
+
+    bool btCnfMiddle = false;
+    bool btCnfMiddleTrigger = false;
+
+    bool btCnfLong = false;
+    bool btCnfLongTrigger = false;
+
+public:
+    void init()
+    {
+        prevCt = util::getSysTickCounter24();
+    }
+
+    uint32_t update()
+    {
+        prevBtCnf = btCnf;
+        prevBtCnfMiddle = btCnfMiddle;
+        prevBtCnfLong = btCnfLong;
+
+        auto cct = util::getSysTickCounter24();
+        auto cdct = (prevCt - cct) & 0xffffff;
+        ct32 += cdct;
+        prevCt = cct;
+
+        btCnf = getBootButton();
+        btCnfTrigger = !prevBtCnf && btCnf;
+        btCnfRelease = prevBtCnf && !btCnf;
+        if (btCnfTrigger)
+        {
+            ctCnfPush = ct32;
+        }
+        constexpr uint32_t CT_MIDDLEPUSH = CPU_CLOCK * 1 /*s*/;
+        constexpr uint32_t CT_LONGPUSH = CPU_CLOCK * 3 /*s*/;
+
+        btCnfMiddle = btCnf && (ct32 - ctCnfPush > CT_MIDDLEPUSH);
+        btCnfMiddleTrigger = !prevBtCnfMiddle && btCnfMiddle;
+
+        btCnfLong = btCnf && (ct32 - ctCnfPush > CT_LONGPUSH);
+        btCnfLongTrigger = !prevBtCnfLong && btCnfLong;
+
+        return cdct;
+    }
+
+    void resetLongPush()
+    {
+        ctCnfPush = ct32;
+    }
+
+    uint32_t getPushCounter() const
+    {
+        return ct32 - ctCnfPush;
+    }
+
+    bool isPushed() const
+    {
+        return btCnf;
+    }
+
+    bool isReleaseEdge() const
+    {
+        return btCnfRelease;
+    }
+
+    bool isMiddleEdge() const
+    {
+        return btCnfMiddleTrigger;
+    }
+
+    bool isPrevLongPushed() const
+    {
+        return prevBtCnfLong;
+    }
+
+    bool isLongEdge() const
+    {
+        return btCnfLongTrigger;
+    }
+};
 
 class VSyncDetector
 {
@@ -267,6 +392,7 @@ namespace
     int adcDMACh_ = dma_claim_unused_channel(true);
     int adcDMADBID_ = 0;
 
+    ButtonWatcher buttonWatcher_;
     VSyncDetector vsyncDetector_;
 }
 
@@ -342,46 +468,15 @@ void startADC()
     adc_run(true);
 }
 
-bool __no_inline_not_in_flash_func(getBootButton)()
-{
-    const uint CS_PIN_INDEX = 1;
-    uint32_t flags = save_and_disable_interrupts();
-
-    // Set chip select to Hi-Z
-    hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
-                    GPIO_OVERRIDE_LOW << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
-                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
-
-    // Note we can't call into any sleep functions in flash right now
-    for (volatile int i = 0; i < 1000; ++i)
-        ;
-
-    bool button_state = !(sio_hw->gpio_hi_in & (1u << CS_PIN_INDEX));
-
-    // Restore the state of chip select
-    hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
-                    GPIO_OVERRIDE_NORMAL << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
-                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
-
-    restore_interrupts(flags);
-
-    return button_state;
-}
-
 void updateMIDIState();
 
 // void setLCDContrast()
 // {
 //     if (HAS_LCD)
 //     {
-//         LCD::instance().waitForNonBlocking();
-//         LCD::instance().setContrast(appConfig_.LCDContrast);
+//         LCD::instance().setContrast(
+//             std::clamp(appConfig_.LCDContrast, 0, 15));
 //     }
-// }
-
-// void applyAppConfig()
-// {
-//     setLCDContrast();
 // }
 
 void setRapidPhaseMask()
@@ -448,6 +543,194 @@ void setTwinPortSetting()
     PadManager::instance().setTwinPortMode(appConfig_.twinPortMode);
 }
 
+void setAnalogMode()
+{
+    PadManager::instance().setAnalogMode(appConfig_.getAnalogMode());
+}
+
+void initButtonGPIO()
+{
+    int i = 0;
+    for (auto b = BUTTON_GPIO_MASK; b; b >>= 1, ++i)
+    {
+        if (b & 1)
+        {
+            gpio_init(i);
+            gpio_set_dir(i, GPIO_OUT);
+            gpio_put(i, REVERSE_STATE ? 1 : 0);
+        }
+    }
+}
+
+namespace
+{
+    uint16_t dacTable_[1025];
+    int16_t dacSensCurve_[AppConfig::ANALOG_MAX][1025];
+
+    int analogTestValue_ = -1;
+    int analogTestMode_ = 0;
+}
+
+void initDACTable()
+{
+    for (int i = 0; i < 1025; ++i)
+    {
+        float v = i * 5.0 / 1024;
+        float y = (1.422f * v * v * v - 9.613f * v * v - 33.06f * v + 233.496f) / 256.0f;
+
+        dacTable_[i] = std::clamp(int(y * 1023 + 0.5f), 0, 1023);
+    }
+}
+
+void initDACSensCurve(int axis)
+{
+    float sensitivity = appConfig_.analogSettings[axis].sensitivity;
+    if (sensitivity == 0)
+    {
+        for (int i = 0; i < 1025; ++i)
+        {
+            dacSensCurve_[axis][i] = i * 2 - 1024;
+        }
+    }
+    else
+    {
+        float d = 1.0f / (1.0f - exp(-sensitivity));
+
+        for (int i = 0; i < 1025; ++i)
+        {
+            float v = (i - 512) / 512.0f;
+            float av = fabsf(v);
+            float sign = v < 0 ? -1 : 1;
+            float y = sign * (1.0f - expf(-sensitivity * av)) * d;
+            dacSensCurve_[axis][i] = std::clamp(int(y * 1024), -1024, 1024);
+        }
+    }
+}
+
+int applyDACSensCurve(int axis, int v, int ofs, int scale_10, bool hasCenter)
+{
+    v = std::clamp(v + ofs, 0, 1024);
+
+    int r = 0;
+    if (hasCenter)
+    {
+        r = dacSensCurve_[axis][v] * scale_10 / 20 + 512;
+    }
+    else
+    {
+        r = dacSensCurve_[axis][(v >> 1) + 512] * scale_10 / 10;
+    }
+    return std::clamp(r, 0, 1024);
+}
+
+void initDACSensCurves()
+{
+    for (int i = 0; i < AppConfig::ANALOG_MAX; ++i)
+    {
+        initDACSensCurve(i);
+    }
+}
+
+void initDACPWM()
+{
+    // E,F 出力を PWM による DAC 出力にするための基本設定
+    // E2,F2 は E1, F1 に隣接しているものとする
+    //    for (auto gpio : {ButtonGPIO::D1, ButtonGPIO::E1, ButtonGPIO::F1})
+    for (auto gpio : {ButtonGPIO::E1, ButtonGPIO::F1})
+    {
+        auto pin = static_cast<int>(gpio);
+        gpio_set_function(pin + 0, GPIO_FUNC_PWM);
+        gpio_set_function(pin + 1, GPIO_FUNC_PWM);
+
+        auto config = pwm_get_default_config();
+        pwm_config_set_clkdiv(&config, 1.f);
+        // 125M/256=488.28125kHz
+        // 125M/1024= 122.070kHz
+        pwm_config_set_wrap(&config, 1023);
+        pwm_init(pwm_gpio_to_slice_num(pin), &config, true);
+
+        pwm_set_gpio_level(pin + 0, 512);
+        pwm_set_gpio_level(pin + 1, 512);
+    }
+}
+
+void setDACValue(ButtonGPIO gpio, int v)
+{
+    auto pin = static_cast<int>(gpio);
+    auto vv = dacTable_[v];
+#ifndef NDEBUG
+    if (analogTestValue_ >= 0)
+    {
+        if (analogTestMode_ == 0)
+        {
+            vv = dacTable_[analogTestValue_ * 4];
+        }
+        else
+        {
+            vv = std::clamp(analogTestValue_ * 4, 0, 1023);
+        }
+    }
+#endif
+    pwm_set_gpio_level(pin, vv);
+    // printf("(%d:%d:%d)\n", pin, v, vv);
+}
+
+void setAnalogValue(const PadState::AnalogState &st, int port)
+{
+    auto getValue = [&](int i)
+    {
+        auto v = st.values[i];
+        auto hasCenter = st.hasCenter[i];
+        return applyDACSensCurve(i, v,
+                                 appConfig_.analogSettings[i].offset * 4,
+                                 appConfig_.analogSettings[i].scale,
+                                 hasCenter);
+    };
+
+    switch (appConfig_.getAnalogMode())
+    {
+    default:
+    case AppConfig::AnalogMode::NONE:
+        break;
+
+    case AppConfig::AnalogMode::_1P2P_EACH_2CH:
+        if (port == 0)
+        {
+            setDACValue(ButtonGPIO::E1, getValue(0));
+            setDACValue(ButtonGPIO::F1, getValue(1));
+        }
+        else
+        {
+            setDACValue(ButtonGPIO::E2, getValue(0));
+            setDACValue(ButtonGPIO::F2, getValue(1));
+        }
+        break;
+
+    case AppConfig::AnalogMode::_1P_ONLY_4CH:
+        if (port == 0)
+        {
+            setDACValue(ButtonGPIO::E1, getValue(0));
+            setDACValue(ButtonGPIO::E2, getValue(1));
+            setDACValue(ButtonGPIO::F1, getValue(2));
+            setDACValue(ButtonGPIO::F2, getValue(3));
+        }
+        break;
+    }
+}
+
+void setupGPIO()
+{
+    if (appConfig_.getAnalogMode() != AppConfig::AnalogMode::NONE)
+    {
+        initDACPWM();
+        initDACTable();
+    }
+    else
+    {
+        initButtonGPIO();
+    }
+}
+
 void applySettings()
 {
     setRapidPhaseMask();
@@ -455,6 +738,9 @@ void applySettings()
     setRotEncSettings(0);
     setRotEncSettings(1);
     setTwinPortSetting();
+    setAnalogMode();
+    setupGPIO();
+    initDACSensCurves();
 }
 
 void resetConfigs()
@@ -598,6 +884,26 @@ const char *getButtonConfigText2PortMode(PadStateButton b)
     }
 }
 
+const char *getAnalogConfigText(PadConfigAnalog b)
+{
+#define MAKE_CNFANALOG_STRING_CASE(x, str) \
+    case PadConfigAnalog::x:               \
+        return str;
+    switch (b)
+    {
+        MAKE_CNFANALOG_STRING_CASE(H0, "EnterA1\5");
+        MAKE_CNFANALOG_STRING_CASE(L0, "EnterA1\6");
+        MAKE_CNFANALOG_STRING_CASE(H1, "EnterA2\5");
+        MAKE_CNFANALOG_STRING_CASE(L1, "EnterA2\6");
+        MAKE_CNFANALOG_STRING_CASE(H2, "EnterA3\5");
+        MAKE_CNFANALOG_STRING_CASE(L2, "EnterA3\6");
+        MAKE_CNFANALOG_STRING_CASE(H3, "EnterA4\5");
+        MAKE_CNFANALOG_STRING_CASE(L3, "EnterA4\6");
+    default:
+        return "";
+    }
+}
+
 const char *getButtonConfigText(PadStateButton b)
 {
     return appConfig_.twinPortMode ? getButtonConfigText2PortMode(b) : getButtonConfigTextNormal(b);
@@ -605,15 +911,15 @@ const char *getButtonConfigText(PadStateButton b)
 
 void initMenu()
 {
-    menu_.setBlinkInterval(CPU_CLOCK / 2);
+    static const char *buttonDispModeText[] = {"Input", "Rapid", "None"};
+    static const char *onOffText[] = {"Off", "On"};
+    static const char *inOutText[] = {"In", "Out"};
+    static const char *reverseText[] = {"Normal", "Reverse"};
+    static const char *initPowerModeText[] = {"InitOff", "InitOn"};
+    static const char *rapidModeText[] = {"Softw", "Synchro"};
+    static const char *analogModeText[] = {"Disable", "2Axis2P", "4Axis1P"};
 
-    menu_.append(
-        "BtnCfg", "LngPress", [](Menu &m)
-        { 
-            textScreen_.clearAll();
-            textScreen_.printMain(0, 0, "BtConfig");
-            PadManager::instance().enterConfigMode(); },
-        true /* config button */);
+    menu_.setBlinkInterval(CPU_CLOCK / 2);
 
     PadManager::instance().setOnExitConfigFunc(
         []
@@ -624,12 +930,69 @@ void initMenu()
             menu_.refresh();
         });
 
-    static const char *buttonDispModeText[] = {"Input", "Rapid", "None"};
-    static const char *onOffText[] = {"Off", "On"};
-    static const char *inOutText[] = {"In", "Out"};
-    static const char *reverseText[] = {"Normal", "Reverse"};
-    static const char *initPowerModeText[] = {"InitOff", "InitOn"};
-    static const char *rapitModeText[] = {"Softw", "Synchro"};
+    menu_.append(
+        "BtnCfg", "LngPress", [](Menu &m)
+        { 
+            textScreen_.clearAll();
+            textScreen_.printMain(0, 0, "BtConfig");
+            PadManager::instance().enterConfigMode(); },
+        true /* config button */);
+    menu_.append(
+             "AnlgCfg", "LngPress", [](Menu &m)
+             { 
+            textScreen_.clearAll();
+            textScreen_.printMain(0, 0, "AnalgCfg");
+            PadManager::instance().enterAnalogConfigMode(); },
+             true /* config button */)
+        .setConditionFunc(
+            []()
+            {
+                return appConfig_.getAnalogMode() != AppConfig::AnalogMode::NONE;
+            });
+    menu_.append("AnalgMd", &appConfig_.analogMode, analogModeText, std::size(analogModeText),
+                 [&](Menu &m)
+                 {
+                     setAnalogMode();
+                     setupGPIO();
+                 });
+#ifndef NDEBUG
+    menu_.append("AnlgTst", &analogTestValue_, {-1, 256},
+                 [](char *buf, size_t bufSize, int v)
+                 {
+                     if (analogTestValue_ >= 0)
+                     {
+                         snprintf(buf, bufSize, "%3d", analogTestValue_);
+                     }
+                     else
+                     {
+                         snprintf(buf, bufSize, "Disable");
+                     }
+                 })
+        .setConditionFunc(
+            []()
+            { return appConfig_.getAnalogMode() != AppConfig::AnalogMode::NONE; });
+
+    static const char *analogTestModeText[] = {"Convert", "Direct"};
+    menu_.append("AnlgTst", &analogTestMode_, analogTestModeText, std::size(analogTestModeText));
+#endif
+    for (int i = 0; i < AppConfig::ANALOG_MAX; ++i)
+    {
+        auto condFunc = [=]()
+        {
+            return i < appConfig_.getAnalogModeChannels();
+        };
+
+        menu_.append("AnlgSns", &appConfig_.analogSettings[i].sensitivity, {-16, 16}, [=](char *buf, size_t bufSize, int v)
+                     { snprintf(buf, bufSize, "[%d]:%d", i + 1, v); }, [=](Menu &m)
+                     { initDACSensCurve(i); })
+            .setConditionFunc(condFunc);
+        menu_.append("AnlgOfs", &appConfig_.analogSettings[i].offset, {-99, 99}, [=](char *buf, size_t bufSize, int v)
+                     { snprintf(buf, bufSize, "[%d]:%d", i + 1, v); })
+            .setConditionFunc(condFunc);
+        menu_.append("AnlgMag", &appConfig_.analogSettings[i].scale, {1, 99}, [=](char *buf, size_t bufSize, int v)
+                     { snprintf(buf, bufSize, "[%d]:%d.%d", i + 1, v / 10, v % 10); })
+            .setConditionFunc(condFunc);
+    }
 
     menu_.append("PowMode", &appConfig_.initPowerOn,
                  initPowerModeText, std::size(initPowerModeText));
@@ -637,17 +1000,22 @@ void initMenu()
     menu_.append("BtnDisp", &appConfig_.buttonDispMode,
                  buttonDispModeText, std::size(buttonDispModeText));
     menu_.append("BackLit", &appConfig_.backLight, onOffText, 2);
-    // menu_.append("LCD Ctr", &appConfig_.LCDContrast, {0, 63}, "%2d",
-    //              [](Menu &)
+    // menu_.append("LCD Ctr", &appConfig_.LCDContrast, {0, 15}, [](char *buf, size_t bufSize, int v)
+    //              { snprintf(buf, bufSize, "%2d", v); }, [](Menu &)
     //              { setLCDContrast(); });
-    menu_.append("RapidMd", &appConfig_.rapidModeSynchro, rapitModeText, std::size(rapitModeText));
+    menu_.append("RapidMd", &appConfig_.rapidModeSynchro, rapidModeText, std::size(rapidModeText));
     menu_.append("SwRapid", &appConfig_.softwareRapidSpeed, {1, 30},
                  // "%2dShot\3"
                  [](char *buf, size_t bufSize, int v)
-                 { snprintf(buf, bufSize, "%2dShot\3", v); });
+                 { snprintf(buf, bufSize, "%2dShot\3", v); })
+        .setConditionFunc(
+            []()
+            { return !appConfig_.rapidModeSynchro; });
     menu_.append("SyncUpT", &appConfig_.synchroFetchPhase, {0, 9},
                  [](char *buf, size_t bufSize, int v)
-                 { snprintf(buf, bufSize, "%2d%%", v * 10); });
+                 { snprintf(buf, bufSize, "%2d%%", v * 10); })
+        .setConditionFunc([]()
+                          { return appConfig_.rapidModeSynchro; });
 
     auto onRapidPhaseChanged = [](Menu &m)
     {
@@ -682,22 +1050,35 @@ void initMenu()
                  { setRotEncSettings(0); });
     menu_.append("RotEncY", &appConfig_.rotEnc[1].axis, rotEncAxisText, std::size(rotEncAxisText), [&](Menu &m)
                  { setRotEncSettings(1); });
+
+    auto rotEncXCond = []()
+    {
+        return appConfig_.rotEnc[0].axis != 0;
+    };
+    auto rotEncYCond = []()
+    {
+        return appConfig_.rotEnc[1].axis != 0;
+    };
     menu_.append(
-        "REncX S", &appConfig_.rotEnc[0].scale, {1, 256}, [](char *buf, size_t bufSize, int v)
-        { snprintf(buf, bufSize, "%3d", v); },
-        [&](Menu &m)
-        { setRotEncSettings(0); });
+             "REncX S", &appConfig_.rotEnc[0].scale, {1, 256}, [](char *buf, size_t bufSize, int v)
+             { snprintf(buf, bufSize, "%3d", v); },
+             [&](Menu &m)
+             { setRotEncSettings(0); })
+        .setConditionFunc(rotEncXCond);
     menu_.append(
-        "REncY S", &appConfig_.rotEnc[1].scale, {1, 256}, [](char *buf, size_t bufSize, int v)
-        { snprintf(buf, bufSize, "%3d", v); },
-        [&](Menu &m)
-        { setRotEncSettings(1); });
+             "REncY S", &appConfig_.rotEnc[1].scale, {1, 256}, [](char *buf, size_t bufSize, int v)
+             { snprintf(buf, bufSize, "%3d", v); },
+             [&](Menu &m)
+             { setRotEncSettings(1); })
+        .setConditionFunc(rotEncYCond);
     menu_.append(
-        "RotEncX", &appConfig_.rotEnc[0].reverse, reverseText, std::size(reverseText), [&](Menu &m)
-        { setRotEncSettings(0); });
+             "RotEncX", &appConfig_.rotEnc[0].reverse, reverseText, std::size(reverseText), [&](Menu &m)
+             { setRotEncSettings(0); })
+        .setConditionFunc(rotEncXCond);
     menu_.append(
-        "RotEncY", &appConfig_.rotEnc[1].reverse, reverseText, std::size(reverseText), [&](Menu &m)
-        { setRotEncSettings(1); });
+             "RotEncY", &appConfig_.rotEnc[1].reverse, reverseText, std::size(reverseText), [&](Menu &m)
+             { setRotEncSettings(1); })
+        .setConditionFunc(rotEncYCond);
 
     menu_.append("2PortMd", &appConfig_.twinPortMode, onOffText, std::size(onOffText),
                  [&](Menu &m)
@@ -748,6 +1129,81 @@ void initMenu()
     padManager.setPrintButtonFunc([](PadStateButton b)
                                   { textScreen_.printMain(0, 1,
                                                           getButtonConfigText(b)); });
+
+    padManager.setPrintCnfAnalogFunc([](PadConfigAnalog b)
+                                     { textScreen_.printMain(0, 1,
+                                                             getAnalogConfigText(b)); });
+}
+
+////
+class MultiPlayerAdapter
+{
+    inline static constexpr uint8_t MPEXT_SUBADDR = 7;
+
+public:
+    explicit operator bool() const { return !!pca95555MPExt_; }
+
+    void init()
+    {
+        if (pca95555MPExt_.init(MPEXT_SUBADDR))
+        {
+            pca95555MPExt_.setPortDir(0xffff);
+            pca95555MPExt_.output(0);
+            dirty_ = true;
+        }
+    }
+
+    void output(uint32_t st3, uint32_t st4)
+    {
+        if (!pca95555MPExt_)
+        {
+            return;
+        }
+
+        // Port3は逆順になっている
+        uint16_t st = ~((((st3 >> 8) & 0b1) |
+                         ((st3 >> 6) & 0b10) |
+                         ((st3 >> 4) & 0b100) |
+                         ((st3 >> 2) & 0b1000) |
+                         ((st3 >> 0) & 0b10000) |
+                         ((st3 << 2) & 0b100000) |
+                         ((st3 << 4) & 0b1000000) |
+                         ((st3 << 6) & 0b10000000)) |
+                        ((st4 >> 1) << 8));
+
+        if (st != prevSt_ || dirty_)
+        {
+            // printf("dir = %04x\n", st);
+            pca95555MPExt_.setPortDirNonBlocking(st);
+            prevSt_ = st;
+            dirty_ = false;
+        }
+
+        auto outButtonCD = [](int i, uint32_t st)
+        {
+            auto &map = padPortMap34_[i];
+            for (auto &m : map)
+            {
+                gpio_put(static_cast<int>(m.gpio),
+                         st & (1u << static_cast<int>(m.padState)));
+            }
+        };
+        outButtonCD(0, st3);
+        outButtonCD(1, st4);
+    }
+
+private:
+    device::PCA9555 pca95555MPExt_;
+
+    uint16_t prevSt_ = 0;
+    bool dirty_ = true;
+};
+
+namespace
+{
+    auto *i2cIF_ = i2c1;
+
+    MultiPlayerAdapter multiPlayerAdapter_;
 }
 
 void updateDisplay(uint32_t dclk)
@@ -767,13 +1223,41 @@ void updateDisplay(uint32_t dclk)
         blink ^= true;
     }
 
+    // 2P以降で最後に更新されたポートを探す
+    static uint32_t prevButtons[PadManager::N_OUTPUT_PORTS]{};
+    static int line2Port = 1;
+    auto prevLine2Port = line2Port;
+    if (multiPlayerAdapter_)
+    {
+        for (int i = PadManager::N_OUTPUT_PORTS - 1; i >= 1; --i)
+        {
+            auto buttons = PadManager::instance().getNonRapidButtons(i);
+            if (buttons != prevButtons[i])
+            {
+                line2Port = i;
+            }
+            prevButtons[i] = buttons;
+        }
+    }
+    else
+    {
+        line2Port = 1;
+    }
+
+    if (line2Port != prevLine2Port)
+    {
+        textScreen_.setFont(1, getPlayerFont(line2Port));
+    }
+
     auto buttonDispMode = appConfig_.buttonDispMode;
 
     auto &padManager = PadManager::instance();
-    for (int port = 0; port < 2; ++port)
+    for (int line = 0; line < 2; ++line)
     {
+        int port = line == 0 ? 0 : line2Port;
+
         int rapidDiv = padManager.getRapidFireDiv(port);
-        textScreen_.setFont(2 + port, get1_NFont(rapidDiv));
+        textScreen_.setFont(2 + line, get1_NFont(rapidDiv));
 
         switch (appConfig_.getButtonDispMode())
         {
@@ -794,8 +1278,8 @@ void updateDisplay(uint32_t dclk)
                 }
             }
             buf[ofs] = 0;
-            textScreen_.printMain(2, port, buf);
-            textScreen_.fill(2 + ofs, port, TextScreen::Layer::MAIN, 6 - ofs, 0);
+            textScreen_.printMain(2, line, buf);
+            textScreen_.fill(2 + ofs, line, TextScreen::Layer::MAIN, 6 - ofs, 0);
         }
         break;
 
@@ -813,8 +1297,8 @@ void updateDisplay(uint32_t dclk)
                 }
             }
             buf[ofs] = 0;
-            textScreen_.printMain(2, port, buf);
-            textScreen_.fill(2 + ofs, port, TextScreen::Layer::MAIN, 6 - ofs, 0);
+            textScreen_.printMain(2, line, buf);
+            textScreen_.fill(2 + ofs, line, TextScreen::Layer::MAIN, 6 - ofs, 0);
         }
         break;
 
@@ -859,59 +1343,67 @@ public:
     }
 };
 
-namespace
-{
-    uint8_t dacTable_[256];
-}
-
-void initDACPWM()
-{
-    // D,E,F 出力を PWM による DAC 出力にするための基本設定
-    // D2,E2,F2 はD1, E1, F1 に隣接しているものとする
-    //    for (auto gpio : {ButtonGPIO::D1, ButtonGPIO::E1, ButtonGPIO::F1})
-    for (auto gpio : {ButtonGPIO::E1, ButtonGPIO::E2, ButtonGPIO::F1})
-    {
-        auto pin = static_cast<int>(gpio);
-        gpio_set_function(pin, GPIO_FUNC_PWM);
-
-        auto config = pwm_get_default_config();
-        pwm_config_set_clkdiv(&config, 1.f); // 125M/256=488.28125kHz
-        pwm_config_set_wrap(&config, 255);
-        pwm_init(pwm_gpio_to_slice_num(pin), &config, true);
-    }
-
-    for (int i = 0; i < 256; ++i)
-    {
-        float v = i / 255.f;
-        float y = -0.2665f * v * v * v + 0.6474f * v * v - 1.0109f * v + 0.7198f;
-        dacTable_[i] = std::clamp(int(y * 255), 0, 255);
-    }
-}
-
-void setDACValue(ButtonGPIO gpio, int v)
-{
-    auto pin = static_cast<int>(gpio);
-    v = dacTable_[v];
-    pwm_set_gpio_level(pin, v);
-}
-
-namespace
-{
-    auto *i2cIF_ = i2c1;
-    device::PCA9555 pca95555MPExt_;
-}
-
 void initDevices()
 {
-    LCD::instance().waitForNonBlocking();
-
     // Multiplayer ext
-    constexpr uint8_t MPEXT_SUBADDR = 7;
-    pca95555MPExt_.init(i2cIF_, MPEXT_SUBADDR);
+    multiPlayerAdapter_.init();
 
     //    LCD::instance().setDisplayOnOff(false);
     //    LCD::instance().setDisplayOnOff(true);
 }
+
+void updateJAMMAOutput(uint32_t st, int port, bool hasMultiPlayerAdapter)
+{
+    if (REVERSE_STATE)
+    {
+        st = ~st;
+    }
+
+    // MultiPlayerAdapter がある場合は、E,FボタンをPort3, Port4に使用する
+    auto n = hasMultiPlayerAdapter ? N_PAD_PORT_MAP_WITH_MPA : N_PAD_PORT_MAP;
+
+    auto &map = padPortMap_[port];
+    for (auto i = 0; i < n; ++i)
+    {
+        auto &m = map[i];
+        gpio_put(static_cast<int>(m.gpio),
+                 st & (1u << static_cast<int>(m.padState)));
+    }
+
+    auto &ast = PadManager::instance().getAnalogState(port);
+    setAnalogValue(ast, port);
+}
+
+void updateOutput()
+{
+    bool hasMPAdapter = !!multiPlayerAdapter_;
+
+    auto &padManager = PadManager::instance();
+    for (int port = 0; port < 2; ++port)
+    {
+        auto st = padManager.getButtons(port);
+#if !defined(NDEBUG) && 0
+        if (port == 0)
+        {
+            for (int i = 0; i < (int)PadStateButton::MAX; ++i)
+            {
+                printf("%c", st & (1u << i) ? '1' : '0');
+            }
+            printf(("\n"));
+        }
+#endif
+        updateJAMMAOutput(st, port, hasMPAdapter);
+    }
+    if (multiPlayerAdapter_)
+    {
+        auto st3 = padManager.getButtons(2);
+        auto st4 = padManager.getButtons(3);
+
+        multiPlayerAdapter_.output(st3, st4);
+    }
+}
+
+void setUSBIniitalized(bool f); // hid_app.cpp
 
 bool powerOn()
 {
@@ -932,6 +1424,10 @@ bool powerOn()
         gpio_put(POWER_EN_PIN, true);
         printf("power on\n");
 
+        applySettings();
+
+        // initDevice 時に5V電源が必要な可能性があるので、安定するまで待つ
+        sleep_ms(100);
         initDevices();
 
         PadManager::instance().reset();
@@ -945,11 +1441,10 @@ bool powerOn()
         if (HAS_LCD)
         {
             menu_.refresh();
-            setRapidPhaseMask();
-            setRapidSettings();
         }
 
         tusb_init();
+        setUSBIniitalized(true);
     }
     else
     {
@@ -968,13 +1463,16 @@ bool powerOn()
 
 void powerOff()
 {
+    setUSBIniitalized(false);
+    tuh_deinit(0);
+
+    initButtonGPIO();
+
     if (HAS_POWER_BUTTON)
     {
         gpio_put(POWER_EN_PIN, false);
     }
     vsyncDetector_.setEnableFPSCount(false);
-
-    tuh_deinit(0);
 
     printf("power off\n");
     if (HAS_LCD)
@@ -1048,30 +1546,7 @@ int main()
 
     DPRINT(("start.\n"));
 
-    // tusb_init();
-
-    auto initOutputPin = [](int pin)
-    {
-        gpio_init(pin);
-        gpio_set_dir(pin, GPIO_OUT);
-        gpio_put(pin, REVERSE_STATE ? 1 : 0);
-    };
-
-#if 0
-    while (1)
-        tuh_task();
-#endif
-
-    {
-        int i = 0;
-        for (auto b = BUTTON_GPIO_MASK; b; b >>= 1, ++i)
-        {
-            if (b & 1)
-            {
-                initOutputPin(i);
-            }
-        }
-    }
+    initButtonGPIO();
 
     constexpr bool enableI2C = HAS_LCD;
 
@@ -1082,11 +1557,12 @@ int main()
         // i2c_init(i2cIF_, 4000);
         gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
         gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
+        getI2CManager().init(i2cIF_);
 
         // LCD
         auto &lcd = LCD::instance();
         DPRINT(("I2C init...\n"));
-        lcd.init(i2cIF_);
+        lcd.init();
         DPRINT(("I2C init done.\n"));
 
         // i2cTest();
@@ -1105,19 +1581,12 @@ int main()
     initADC();
     startADC();
 
-    // initDACPWM();
+    // DAC
+    initDACTable();
 
 #ifdef NDEBUG
     watchdog_enable(5000, true);
 #endif
-
-    bool prevBtCnf = false;
-    bool prevBtCnfMiddle = false;
-    bool prevBtCnfLong = false;
-    auto prevCt = util::getSysTickCounter24();
-    uint32_t ct32 = 0;
-    uint32_t ctCnfPush = 0;
-
     auto &padManager = PadManager::instance();
     bool power = !HAS_POWER_BUTTON;
     padManager.setNormalModeLED(HAS_POWER_BUTTON);
@@ -1131,39 +1600,25 @@ int main()
         power = powerOn();
     }
 
+    buttonWatcher_.init();
+
     while (1)
     {
         watchdog_update();
 
-        auto cct = util::getSysTickCounter24();
-        auto cdct = (prevCt - cct) & 0xffffff;
-        ct32 += cdct;
-        prevCt = cct;
-
-        bool btCnf = getBootButton();
-        bool btCnfTrigger = !prevBtCnf && btCnf;
-        bool btCnfRelease = prevBtCnf && !btCnf;
-        if (btCnfTrigger)
-        {
-            ctCnfPush = ct32;
-        }
-        constexpr uint32_t CT_MIDDLEPUSH = CPU_CLOCK * 1 /*s*/;
-        constexpr uint32_t CT_LONGPUSH = CPU_CLOCK * 3 /*s*/;
-        constexpr uint32_t CT_ALLINIT = CPU_CLOCK * 20 /*s*/;
-
-        bool btCnfMiddle = btCnf && (ct32 - ctCnfPush > CT_MIDDLEPUSH);
-        bool btCnfMiddleTrigger = !prevBtCnfMiddle && btCnfMiddle;
-
-        bool btCnfLong = btCnf && (ct32 - ctCnfPush > CT_LONGPUSH);
-        bool btCnfLongTrigger = !prevBtCnfLong && btCnfLong;
+        auto cdct = buttonWatcher_.update();
 
         if (!power && HAS_POWER_BUTTON)
         {
-            if ((prevBtCnf ^ btCnf) && !btCnf && !prevBtCnfLong)
+            constexpr uint32_t CT_ALLINIT = CPU_CLOCK * 20 /*s*/;
+
+            if (buttonWatcher_.isReleaseEdge() &&
+                !buttonWatcher_.isPrevLongPushed())
             {
                 power = powerOn();
             }
-            else if (btCnf && (ct32 - ctCnfPush) > CT_ALLINIT)
+            else if (buttonWatcher_.isPushed() &&
+                     buttonWatcher_.getPushCounter() > CT_ALLINIT)
             {
                 DPRINT(("init all\n"));
                 textScreen_.printInfo(0, 0, "ALL");
@@ -1184,19 +1639,20 @@ int main()
                                             (1u << static_cast<int>(PadStateButton::CMD));
             auto btPowOff = (nrb & MASK_POWER_OFF) == MASK_POWER_OFF;
 
-            if ((btCnfLongTrigger || btPowOff) && HAS_POWER_BUTTON)
+            if ((buttonWatcher_.isLongEdge() || btPowOff) && HAS_POWER_BUTTON)
             {
                 powerOff();
                 power = false;
             }
             else
             {
-                if (HAS_LCD && !padManager.isConfigMode())
+                if (HAS_LCD && padManager.isNormalMode())
                 {
                     menu_.update(cdct,
                                  nrb,
-                                 btCnfRelease,
-                                 btCnfMiddleTrigger);
+                                 buttonWatcher_.isPushed(),
+                                 buttonWatcher_.isReleaseEdge(),
+                                 buttonWatcher_.isMiddleEdge());
                 }
 
                 if (appConfig_.rapidModeSynchro)
@@ -1209,50 +1665,14 @@ int main()
                     padManager.setVSyncCount(swRapidFire.getCounter());
                 }
 
-                padManager.update(cdct, btCnf, btCnfRelease, btCnfMiddleTrigger);
+                padManager.update(cdct,
+                                  buttonWatcher_.isPushed(),
+                                  buttonWatcher_.isReleaseEdge(),
+                                  buttonWatcher_.isMiddleEdge());
 
-                for (int port = 0; port < 2; ++port)
-                {
-                    auto st = padManager.getButtons(port);
-#if !defined(NDEBUG) && 0
-                    if (port == 0)
-                    {
-                        for (int i = 0; i < (int)PadStateButton::MAX; ++i)
-                        {
-                            printf("%c", st & (1u << i) ? '1' : '0');
-                        }
-                        printf(("\n"));
-                    }
-#endif
-                    if (REVERSE_STATE)
-                    {
-                        st = ~st;
-                    }
+                updateOutput();
 
-                    auto &map = padPortMap_[port];
-                    for (auto &m : map)
-                    {
-                        gpio_put(static_cast<int>(m.gpio),
-                                 st & (1u << static_cast<int>(m.padState)));
-                    }
-
-#if 0
-                    auto &ast = padManager.getAnalogState(port);
-                    if (ast.mask)
-                    {
-                        for (int i = 0; i < 3; ++i)
-                        {
-                            if (ast.mask & (1u << i))
-                            {
-                                printf("v%d:%d\n", i, ast.values[i]);
-                                setDACValue(analogPortMap_[port][i], ast.values[i]);
-                            }
-                        }
-                    }
-#endif
-                }
-
-                if (HAS_LCD && !padManager.isConfigMode())
+                if (HAS_LCD && padManager.isNormalMode())
                 {
                     updateDisplay(cdct);
                     menu_.render();
@@ -1273,10 +1693,6 @@ int main()
 
         tuh_task();
         updateMIDIState();
-
-        prevBtCnf = btCnf;
-        prevBtCnfMiddle = btCnfMiddle;
-        prevBtCnfLong = btCnfLong;
     }
     return 0;
 }

@@ -17,80 +17,7 @@ public:
     using ActionFunc = std::function<void(Menu &)>;
     using OpenCloseFunc = std::function<void(bool)>;
     using ValueFormatFunc = std::function<void(char *, size_t, int)>;
-
-public:
-    Menu(TextScreen *textScreen)
-        : textScreen_(textScreen)
-    {
-    }
-
-    void append(const char *name, int *value,
-                const char **valueTexts, size_t nValueTexts,
-                ActionFunc onValueChange = {},
-                ActionFunc onButton = {},
-                bool menuButton = false)
-    {
-        MenuItem item;
-        item.name = name;
-        item.value = value;
-        item.valueTexts = valueTexts;
-        item.range = {0, static_cast<int>(nValueTexts) - 1};
-        item.onValueChange = onValueChange;
-        item.onButton = onButton;
-        item.menuButton = menuButton;
-        items_.push_back(item);
-    }
-
-    void append(const char *name, int *value,
-                std::pair<int, int> range,
-                //                const char *valueFormat,
-                ValueFormatFunc valueFormat,
-                ActionFunc onValueChange = {},
-                ActionFunc onButton = {},
-                bool menuButton = false)
-    {
-        MenuItem item;
-        item.name = name;
-        item.value = value;
-        item.range = range;
-        item.valueFormat = valueFormat;
-        item.onValueChange = onValueChange;
-        item.onButton = onButton;
-        item.menuButton = menuButton;
-        items_.push_back(item);
-    }
-
-    void append(const char *name, const char *text, ActionFunc onButton = {}, bool menuButton = false)
-    {
-        //        append(name, {}, {}, text, {}, onButton, menuButton);
-        MenuItem item;
-        item.name = name;
-        item.valueText = text;
-        item.onButton = onButton;
-        item.menuButton = menuButton;
-        items_.push_back(item);
-    }
-
-    void refresh();
-    void update(int dclk,
-                uint32_t pad,
-                bool menuButtonRelease, bool menuButtonLongPress);
-    void render() const;
-
-    bool isOpened() const { return open_; }
-    void setBlinkInterval(int interval) { blinkInterval_ = interval; }
-
-    void setOpenCloseFunc(OpenCloseFunc f);
-    void forceClose() { open_ = false; }
-
-    bool isChanged() const { return changed_; }
-    void clearChanged() { changed_ = false; }
-
-    std::pair<uint32_t, uint32_t> getPad() const { return {pad_, padPrev_}; }
-
-private:
-    TextScreen *textScreen_;
-    TextScreen::Layer layer_ = TextScreen::Layer::MAIN;
+    using ConditionFunc = std::function<bool()>;
 
     struct MenuItem
     {
@@ -105,7 +32,103 @@ private:
 
         ActionFunc onValueChange;
         ActionFunc onButton;
+        ConditionFunc conditionFunc;
+
+        MenuItem &setConditionFunc(ConditionFunc f)
+        {
+            conditionFunc = f;
+            return *this;
+        }
     };
+
+public:
+    Menu(TextScreen *textScreen)
+        : textScreen_(textScreen)
+    {
+    }
+
+    MenuItem &append(const char *name, int *value,
+                     const char **valueTexts, size_t nValueTexts,
+                     ActionFunc onValueChange = {},
+                     ActionFunc onButton = {},
+                     bool menuButton = false)
+    {
+        MenuItem item;
+        item.name = name;
+        item.value = value;
+        item.valueTexts = valueTexts;
+        item.range = {0, static_cast<int>(nValueTexts) - 1};
+        item.onValueChange = onValueChange;
+        item.onButton = onButton;
+        item.menuButton = menuButton;
+        items_.push_back(item);
+
+        return items_.back();
+    }
+
+    MenuItem &append(const char *name, int *value,
+                     std::pair<int, int> range,
+                     //                const char *valueFormat,
+                     ValueFormatFunc valueFormat,
+                     ActionFunc onValueChange = {},
+                     ActionFunc onButton = {},
+                     bool menuButton = false)
+    {
+        MenuItem item;
+        item.name = name;
+        item.value = value;
+        item.range = range;
+        item.valueFormat = valueFormat;
+        item.onValueChange = onValueChange;
+        item.onButton = onButton;
+        item.menuButton = menuButton;
+        items_.push_back(item);
+
+        return items_.back();
+    }
+
+    MenuItem &append(const char *name, const char *text, ActionFunc onButton = {}, bool menuButton = false)
+    {
+        //        append(name, {}, {}, text, {}, onButton, menuButton);
+        MenuItem item;
+        item.name = name;
+        item.valueText = text;
+        item.onButton = onButton;
+        item.menuButton = menuButton;
+        items_.push_back(item);
+
+        return items_.back();
+    }
+
+    void refresh();
+    void update(int dclk,
+                uint32_t pad,
+                bool menuButtonPress,
+                bool menuButtonRelease,
+                bool menuButtonLongPress);
+    void render() const;
+
+    bool isOpened() const { return open_; }
+    void setBlinkInterval(int interval) { blinkInterval_ = interval; }
+
+    void setOpenCloseFunc(OpenCloseFunc f);
+    void forceClose()
+    {
+        open_ = false;
+        openLock_ = true;
+    }
+
+    bool isChanged() const { return changed_; }
+    void clearChanged() { changed_ = false; }
+
+    std::pair<uint32_t, uint32_t> getPad() const { return {pad_, padPrev_}; }
+
+protected:
+    void nextItem(bool inc);
+
+private:
+    TextScreen *textScreen_;
+    TextScreen::Layer layer_ = TextScreen::Layer::MAIN;
 
     std::vector<MenuItem> items_;
 
@@ -120,4 +143,6 @@ private:
 
     OpenCloseFunc onOpenClose_;
     bool changed_ = false;
+
+    bool openLock_ = false;
 };

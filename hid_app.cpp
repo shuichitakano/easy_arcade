@@ -34,13 +34,15 @@ extern "C"
 
 namespace
 {
+    bool usbInitialized_ = false;
+
     inline constexpr size_t HUB0_PORT_COUNT = 2;
     inline constexpr size_t MAX_PORTS = 4;
     inline constexpr uint8_t HUB0_ADDR = CFG_TUH_DEVICE_MAX + 1;
     inline constexpr uint8_t HUB1_ADDR = CFG_TUH_DEVICE_MAX + 2; // ポートに差しているHUB
 
-    std::array<HIDInfo, MAX_PORTS> hidInfos_; // port毎のHIDInfo
-    descriptor_hub_desc_t extHubDesc_;        // 追加HUBのdescriptor
+    std::array<HIDInfo, CFG_TUH_DEVICE_MAX> hidInfos_; // devaddr毎のHIDInfo
+    descriptor_hub_desc_t extHubDesc_;                 // 追加HUBのdescriptor
 
     uint8_t hub0Port_[HUB0_PORT_COUNT]{0, 1};
     uint8_t hub1PortOffset_ = 0;
@@ -115,6 +117,11 @@ namespace
 
     void checkExtHub()
     {
+        if (!usbInitialized_)
+        {
+            return;
+        }
+
         tusb_control_request_t const request = {
             .bmRequestType_bit = {
                 .recipient = TUSB_REQ_RCPT_DEVICE,
@@ -143,6 +150,8 @@ namespace
 
 extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_report, uint16_t desc_len)
 {
+    assert(dev_addr >= 1);
+
     uint16_t vid, pid;
     tuh_vid_pid_get(dev_addr, &vid, &pid);
 
@@ -160,7 +169,7 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
     DPRINT(("port = %d\n", port));
     if (port >= 0 && port < MAX_PORTS)
     {
-        auto &hidInfo = hidInfos_[port];
+        auto &hidInfo = hidInfos_[dev_addr - 1];
         hidInfo.parseDesc(desc_report, desc_report + desc_len);
         hidInfo.setVID(vid);
         hidInfo.setPID(pid);
@@ -181,6 +190,7 @@ extern "C" void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr,
                                            uint8_t instance, uint8_t const *report, uint16_t len)
 {
+    assert(dev_addr >= 1);
     int port = getControllerPortID(dev_addr);
 
     // printf("report received: addr:%d, inst %d, port %d\n", dev_addr, instance, port);
@@ -188,7 +198,7 @@ extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr,
 
     if (port >= 0 && port < MAX_PORTS)
     {
-        auto &hidInfo = hidInfos_[port];
+        auto &hidInfo = hidInfos_[dev_addr - 1];
 
         PadManager::PadInput padInput;
         padInput.vid = hidInfo.getVID();
@@ -302,4 +312,9 @@ void tuh_umount_cb(uint8_t dev_addr)
 {
     DPRINT(("A device with address %d is unmounted\n", dev_addr));
     checkExtHub();
+}
+
+void setUSBIniitalized(bool f)
+{
+    usbInitialized_ = f;
 }

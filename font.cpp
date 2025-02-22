@@ -190,8 +190,28 @@ const uint8_t *getPlayerFont(int i)
             0b00001,
             0b11111,
         },
+        {
+            0b11001,
+            0b00101,
+            0b01001,
+            0b00101,
+            0b00101,
+            0b11101,
+            0b00001,
+            0b11111,
+        },
+        {
+            0b10101,
+            0b10101,
+            0b10101,
+            0b10101,
+            0b11101,
+            0b00101,
+            0b00001,
+            0b11111,
+        },
     };
-    return i >= 0 && i < 2 ? data[i] : nullptr;
+    return i >= 0 && i < 4 ? data[i] : nullptr;
 }
 
 const uint8_t *getLeftRightFont()

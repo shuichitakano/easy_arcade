@@ -45,6 +45,7 @@ add_executable(arcade_play
         rot_encoder.cpp
         app_config.cpp
         pca9555.cpp
+        i2c_manager.cpp
         )
 
 pico_set_program_name(arcade_play "arcade_play")
