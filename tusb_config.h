@@ -28,7 +28,9 @@ extern "C"
 #define CFG_TUH_HUB 2
 #define CFG_TUH_CDC 0
 // #define CFG_TUH_HID 2
-#define CFG_TUH_HID (3 * CFG_TUH_DEVICE_MAX) // typical keyboard + mouse device can have 3-4 HID interfaces#define CFG_TUH_MSC 0
+#define CFG_TUH_HID (3 * CFG_TUH_DEVICE_MAX) // typical keyboard + mouse device can have 3-4 HID interfaces
+#define CFG_TUH_MSC 1
+#define CFG_TUH_MSC_MAXLUN 1
 #define CFG_TUH_VENDOR 0
 #define CFG_TUSB_HOST_DEVICE_MAX (4 + 1)
 #define CFG_TUH_HID_EP_BUFSIZE 64

@@ -149,6 +149,13 @@ public:
     void serialize(Serializer &s) const;
     void deserialize(Deserializer &s);
 
+    const std::vector<PadConfig> &getConfigs() const { return configs_; }
+    void replaceConfigs(std::vector<PadConfig> &&configs)
+    {
+        configs_ = std::move(configs);
+        sort();
+    }
+
     void reset();
 
 protected:

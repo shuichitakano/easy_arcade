@@ -143,6 +143,14 @@ public:
     {
         translator_.reset();
     }
+    const std::vector<PadConfig> &getConfigs() const
+    {
+        return translator_.getConfigs();
+    }
+    void replaceConfigs(std::vector<PadConfig> &&configs)
+    {
+        translator_.replaceConfigs(std::move(configs));
+    }
     void setRotEncSetting(int kind, int axis, int scale);
 
     void setTwinPortMode(bool f)

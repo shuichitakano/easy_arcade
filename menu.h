@@ -29,6 +29,7 @@ public:
         // const char *valueFormat{};
         ValueFormatFunc valueFormat;
         bool menuButton = false; // onButton でMenuボタンを見る
+        bool changesConfig = true;
 
         ActionFunc onValueChange;
         ActionFunc onButton;
@@ -37,6 +38,12 @@ public:
         MenuItem &setConditionFunc(ConditionFunc f)
         {
             conditionFunc = f;
+            return *this;
+        }
+
+        MenuItem &setChangesConfig(bool changes)
+        {
+            changesConfig = changes;
             return *this;
         }
     };

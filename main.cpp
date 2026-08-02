@@ -10,6 +10,8 @@
 #include <hardware/divider.h>
 #include <stdint.h>
 #include <tusb.h>
+#include "usb_storage.h"
+#include "config_json.h"
 #include <algorithm>
 #include "pad_manager.h"
 #include "pad_state.h"
@@ -1084,6 +1086,54 @@ void initMenu()
                  [&](Menu &m)
                  { setTwinPortSetting(); });
 
+    auto storageMenuCondition = []()
+    {
+        return usbStorageMounted();
+    };
+
+    menu_.append("ImpCfg", "A+START", [](Menu &m)
+                 {
+        const auto [pad, previousPad] = m.getPad();
+        (void)previousPad;
+        const auto startMask = 1u << static_cast<int>(PadStateButton::START);
+        if (!(pad & startMask))
+        {
+            return;
+        }
+
+        AppConfig importedApp;
+        std::vector<PadConfig> importedPads;
+        const auto result = importConfigJson(CONFIG_JSON_PATH, importedApp, importedPads);
+        if (result == ConfigJsonResult::OK)
+        {
+            appConfig_ = importedApp;
+            PadManager::instance().replaceConfigs(std::move(importedPads));
+            applySettings();
+            save();
+        }
+        textScreen_.printInfo(0, 1, configJsonResultText(result));
+        textScreen_.setInfoLayerClearTimer(CPU_CLOCK * 2); })
+        .setConditionFunc(storageMenuCondition)
+        .setChangesConfig(false);
+
+    menu_.append("ExpCfg", "A+START", [](Menu &m)
+                 {
+        const auto [pad, previousPad] = m.getPad();
+        (void)previousPad;
+        const auto startMask = 1u << static_cast<int>(PadStateButton::START);
+        if (!(pad & startMask))
+        {
+            return;
+        }
+
+        const auto &padManager = PadManager::instance();
+        const auto result = exportConfigJson(CONFIG_JSON_PATH, appConfig_,
+                                             padManager.getConfigs());
+        textScreen_.printInfo(0, 1, configJsonResultText(result));
+        textScreen_.setInfoLayerClearTimer(CPU_CLOCK * 2); })
+        .setConditionFunc(storageMenuCondition)
+        .setChangesConfig(false);
+
     menu_.append("InitAll", "PressA+S", [](Menu &m)
                  {
         auto pad = m.getPad();
@@ -1443,6 +1493,7 @@ bool powerOn()
             menu_.refresh();
         }
 
+        usbStorageInit();
         tusb_init();
         setUSBIniitalized(true);
     }
@@ -1464,6 +1515,7 @@ bool powerOn()
 void powerOff()
 {
     setUSBIniitalized(false);
+    usbStorageDeinit();
     tuh_deinit(0);
 
     initButtonGPIO();
@@ -1692,6 +1744,7 @@ int main()
         }
 
         tuh_task();
+        usbStorageTask();
         updateMIDIState();
     }
     return 0;

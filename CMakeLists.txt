@@ -16,14 +16,30 @@ set(CMAKE_CXX_STANDARD 17)
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-if (PICO_SDK_VERSION_STRING VERSION_LESS "1.4.0")
-  message(FATAL_ERROR "Raspberry Pi Pico SDK version 1.4.0 (or later) required. Your version is ${PICO_SDK_VERSION_STRING}")
+if (PICO_SDK_VERSION_STRING VERSION_LESS "2.3.0")
+  message(FATAL_ERROR "Raspberry Pi Pico SDK version 2.3.0 (or later) required. Your version is ${PICO_SDK_VERSION_STRING}")
 endif()
 
 project(arcade_play C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
+
+# FatFS is shipped with the TinyUSB version pinned by the Pico SDK. Copy the
+# sources into the build tree so our memory-optimized ffconf.h is selected by
+# ff.h's local include.
+set(FATFS_SOURCE_DIR "${PICO_SDK_PATH}/lib/tinyusb/lib/fatfs/source")
+set(FATFS_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/fatfs")
+if (NOT EXISTS "${FATFS_SOURCE_DIR}/ff.c")
+  message(FATAL_ERROR "FatFS source not found in TinyUSB: ${FATFS_SOURCE_DIR}")
+endif()
+file(MAKE_DIRECTORY "${FATFS_BUILD_DIR}")
+foreach(FATFS_FILE ff.c ff.h diskio.h ffunicode.c)
+  configure_file("${FATFS_SOURCE_DIR}/${FATFS_FILE}"
+                 "${FATFS_BUILD_DIR}/${FATFS_FILE}" COPYONLY)
+endforeach()
+configure_file("${CMAKE_CURRENT_LIST_DIR}/fatfs/ffconf.h"
+               "${FATFS_BUILD_DIR}/ffconf.h" COPYONLY)
 
 # Add executable. Default name is the project name, version 0.1
 
@@ -38,6 +54,10 @@ add_executable(arcade_play
         third_party/tusb_xinput/xinput_host.c
         usb_app_driver.cpp
         usb_midi.cpp
+        usb_storage.cpp
+        config_json.cpp
+        ${FATFS_BUILD_DIR}/ff.c
+        ${FATFS_BUILD_DIR}/ffunicode.c
         lcd.cpp
         text_screen.cpp
         font.cpp
@@ -73,6 +93,8 @@ target_include_directories(arcade_play
 PRIVATE
     .
     third_party
+    third_party/rapidjson/include
+    ${FATFS_BUILD_DIR}
 )
 
 # Add any user requested libraries
@@ -98,4 +120,3 @@ PRIVATE
 endif()        
 
 pico_add_extra_outputs(arcade_play)
-

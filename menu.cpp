@@ -60,6 +60,11 @@ void Menu::update(int dclk,
     }
     else if (open_)
     {
+        if (items_[currentItem_].conditionFunc &&
+            !items_[currentItem_].conditionFunc())
+        {
+            nextItem(true);
+        }
         auto &item = items_[currentItem_];
 
         if (testButton(PadStateButton::UP))
@@ -101,7 +106,10 @@ void Menu::update(int dclk,
                  (!item.menuButton && testButton(PadStateButton::A))))
             {
                 item.onButton(*this);
-                changed_ = true;
+                if (item.changesConfig)
+                {
+                    changed_ = true;
+                }
             }
         }
     }
