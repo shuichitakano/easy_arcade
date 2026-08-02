@@ -6,6 +6,7 @@
 #include "pad_state.h"
 
 #include "debug.h"
+#include "rapid_timing.h"
 #include <cassert>
 #include <cstdio>
 #include <algorithm>
@@ -21,6 +22,7 @@ void PadState::reset()
     mappedButtonsRapidA_ = 0;
     mappedButtonsRapidB_ = 0;
     mappedRapidFireMask_ = 0;
+    rapidSyncStart_ = {};
 }
 
 void PadState::update()
@@ -34,6 +36,10 @@ void PadState::update()
     bool cmd = mappedButtons_ & (1u << static_cast<int>(PadStateButton::CMD));
     uint32_t mappedTrigger = (mappedButtons_ ^ mappedButtonsPrev_) & mappedButtons_;
     uint32_t unmappedTrigger = (unmappedButtons_ ^ unmappedButtonsPrev_) & unmappedButtons_;
+
+    for (int i = 0; i < nMapButtons_; ++i)
+        if (unmappedTrigger & (1u << i))
+            rapidSyncStart_[i] = vsyncCount_;
 
     if (cmd && (mappedTrigger || unmappedTrigger))
     {
@@ -63,8 +69,16 @@ void PadState::update()
         auto b = buttonMap_[i];
         if (rapidFireMask_ & (1u << i))
         {
-            mmA |= b & rapidFirePhase_;
-            mmB |= b & ~rapidFirePhase_;
+            if (b & rapidFireSyncMask_)
+            {
+                mmA |= b;
+                mmB |= b;
+            }
+            else
+            {
+                mmA |= b & rapidFirePhase_;
+                mmB |= b & ~rapidFirePhase_;
+            }
             mm |= buttonMap0_[i];
         }
         else
@@ -80,7 +94,8 @@ void PadState::update()
 
 uint32_t PadState::getButtons() const
 {
-    bool rapidFire = (vsyncCount_ / std::max(1, rapidFireDiv_)) & 1;
+    const auto divisor = std::max(1, rapidFireDiv_);
+    bool rapidFire = (vsyncCount_ / divisor) & 1;
     const uint32_t rapidMask = rapidFire ? 0xffffffff : 0;
 
     const auto maskA = rapidMask & rapidFirePhase_;
@@ -93,7 +108,16 @@ uint32_t PadState::getButtons() const
         auto b = buttonMap_[i];
         if (rapidFireMask_ & (1u << i))
         {
-            r |= b & maskAB;
+            if (b & rapidFireSyncMask_)
+            {
+                const bool syncOn = RapidTiming::synchronizedOn(vsyncCount_, rapidSyncStart_[i], divisor);
+                if (syncOn)
+                    r |= b;
+            }
+            else
+            {
+                r |= b & maskAB;
+            }
         }
         else
         {

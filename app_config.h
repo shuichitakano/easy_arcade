@@ -11,12 +11,20 @@ class Deserializer;
 
 struct AppConfig
 {
-    static inline constexpr int VERSION = 4;
+    static inline constexpr int VERSION = 5;
+    static inline constexpr int MIN_SUPPORTED_VERSION = 4;
 
     struct RapidSetting
     {
         uint32_t mask = 0;
         int div = 1;
+    };
+
+    enum RapidPhase
+    {
+        RAPID_FRONT = 0,
+        RAPID_BACK = 1,
+        RAPID_SYNC = 2,
     };
 
     enum class ButtonDispMode
@@ -77,6 +85,7 @@ struct AppConfig
     std::array<RotEnc, 2> rotEnc{};
 
     int twinPortMode = false; // 1P, 2P混在モード
+    int virtualButtonConfig = false; // BtnCfgで仮想論理ボタンG〜Jを設定
     int analogMode = 0;
     AnalogSetting analogSettings[ANALOG_MAX];
 

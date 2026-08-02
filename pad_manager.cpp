@@ -28,6 +28,10 @@ namespace
             "D",
             "E",
             "F",
+            "G",
+            "H",
+            "I",
+            "J",
             "COIN2",
             "START2",
             "UP2",
@@ -40,6 +44,10 @@ namespace
             "D2",
             "E2",
             "F2",
+            "G2",
+            "H2",
+            "I2",
+            "J2",
         };
         auto i = static_cast<size_t>(b);
         assert(i < std::size(tbl));
@@ -326,6 +334,14 @@ void PadManager::setRapidFirePhaseMask(uint32_t v)
     }
 }
 
+void PadManager::setRapidFireSyncMask(uint32_t v)
+{
+    for (auto &s : padStates_)
+    {
+        s.setRapidFireSyncMask(v);
+    }
+}
+
 void PadManager::serialize(Serializer &s) const
 {
     translator_.serialize(s);
@@ -527,6 +543,19 @@ void PadManager::ButtonConfigMode::next(PadManager &mgr)
     curButtonSet_.clear();
 
     curButton_ = curButton_ + 1;
+    if (!mgr.virtualButtonConfig_)
+    {
+        if (curButton_ == static_cast<int>(PadStateButton::G))
+        {
+            curButton_ = mgr.twinPortMode_
+                             ? static_cast<int>(PadStateButton::COIN_2P)
+                             : static_cast<int>(PadStateButton::MAX);
+        }
+        else if (curButton_ == static_cast<int>(PadStateButton::G_2P))
+        {
+            curButton_ = static_cast<int>(PadStateButton::MAX_2P);
+        }
+    }
     if (curButton_ == nButtons(mgr))
     {
         // おわり

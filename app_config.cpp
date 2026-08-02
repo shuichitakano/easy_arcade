@@ -39,11 +39,13 @@ void AppConfig::serialize(Serializer &s)
         s.append8i(v.offset);
         s.append8u(v.scale);
     }
+    s.append8u(virtualButtonConfig);
 }
 
 bool AppConfig::deserialize(Deserializer &s)
 {
-    if (s.peek8u() != VERSION)
+    const int version = s.peek8u();
+    if (version < MIN_SUPPORTED_VERSION || version > VERSION)
     {
         return false;
     }
@@ -78,6 +80,7 @@ bool AppConfig::deserialize(Deserializer &s)
         v.offset = s.peek8i();
         v.scale = s.peek8u();
     }
+    virtualButtonConfig = version >= 5 ? s.peek8u() : false;
 
     return true;
 }

@@ -216,6 +216,7 @@ namespace
         SCALE,
         AXIS,
         TWIN_PORT_MODE,
+        VIRTUAL_BUTTON_CONFIG,
         ANALOG_MODE,
         ANALOG_SETTINGS,
         SENSITIVITY,
@@ -266,6 +267,7 @@ namespace
         CONFIG_KEY(SCALE, "scale");
         CONFIG_KEY(AXIS, "axis");
         CONFIG_KEY(TWIN_PORT_MODE, "twinPortMode");
+        CONFIG_KEY(VIRTUAL_BUTTON_CONFIG, "virtualButtonConfig");
         CONFIG_KEY(ANALOG_MODE, "analogMode");
         CONFIG_KEY(ANALOG_SETTINGS, "analogSettings");
         CONFIG_KEY(SENSITIVITY, "sensitivity");
@@ -389,7 +391,7 @@ namespace
                 complete_ = true;
                 break;
             case Context::APP:
-                if (appMask_ != APP_REQUIRED)
+                if (appMask_ != (appVersion_ >= 5 ? APP_REQUIRED : APP_REQUIRED_V4))
                     return fail(ConfigJsonResult::INVALID_FORMAT);
                 break;
             case Context::RAPID_SETTING:
@@ -523,7 +525,8 @@ namespace
 
     private:
         static constexpr uint32_t ROOT_REQUIRED = (1u << 4) - 1;
-        static constexpr uint32_t APP_REQUIRED = (1u << 14) - 1;
+        static constexpr uint32_t APP_REQUIRED_V4 = (1u << 14) - 1;
+        static constexpr uint32_t APP_REQUIRED = (1u << 15) - 1;
         static constexpr uint32_t RAPID_SETTING_REQUIRED = (1u << 2) - 1;
         static constexpr uint32_t ROT_ENC_REQUIRED = (1u << 3) - 1;
         static constexpr uint32_t ANALOG_SETTING_REQUIRED = (1u << 3) - 1;
@@ -591,8 +594,10 @@ namespace
                 switch (key_)
                 {
                 case Field::VERSION:
-                    if (value == AppConfig::VERSION)
+                    if (value >= AppConfig::MIN_SUPPORTED_VERSION &&
+                        value <= AppConfig::VERSION)
                     {
+                        appVersion_ = static_cast<int>(value);
                         key_ = Field::NONE;
                         return mark(appMask_, 1u << 0);
                     }
@@ -606,11 +611,14 @@ namespace
                 case Field::SOFTWARE_RAPID_SPEED: return assign(appMask_, 1u << 7, appConfig_.softwareRapidSpeed, value, 1, 30);
                 case Field::TWIN_PORT_MODE: return assign(appMask_, 1u << 11, appConfig_.twinPortMode, value, 0, 1);
                 case Field::ANALOG_MODE: return assign(appMask_, 1u << 12, appConfig_.analogMode, value, 0, 2);
+                case Field::VIRTUAL_BUTTON_CONFIG:
+                    return assign(appMask_, 1u << 14,
+                                  appConfig_.virtualButtonConfig, value, 0, 1);
                 default: break;
                 }
                 break;
             case Context::RAPID_PHASE:
-                if (rapidPhaseIndex_ < appConfig_.rapidPhase.size() && value >= 0 && value <= 1)
+                if (rapidPhaseIndex_ < appConfig_.rapidPhase.size() && value >= 0 && value <= 2)
                 {
                     appConfig_.rapidPhase[rapidPhaseIndex_++] = static_cast<int>(value);
                     return true;
@@ -749,6 +757,7 @@ namespace
         size_t analogSettingIndex_ = 0;
 
         AppConfig appConfig_{};
+        int appVersion_ = AppConfig::VERSION;
         std::vector<PadConfig> padConfigs_;
         int padVid_ = 0;
         int padPid_ = 0;
@@ -815,6 +824,7 @@ namespace
         }
         writer.EndArray();
         writer.Key("twinPortMode"); writer.Int(app.twinPortMode);
+        writer.Key("virtualButtonConfig"); writer.Int(app.virtualButtonConfig);
         writer.Key("analogMode"); writer.Int(app.analogMode);
         writer.Key("analogSettings"); writer.StartArray();
         for (const auto &setting : app.analogSettings)

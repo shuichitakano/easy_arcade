@@ -24,6 +24,12 @@ enum class PadStateButton
     D,
     E,
     F,
+    // Virtual logical buttons used as macro triggers. They have no direct
+    // JAMMA output unless an active macro profile maps them.
+    G,
+    H,
+    I,
+    J,
     MAX,
 
     COIN_2P = MAX,
@@ -38,9 +44,17 @@ enum class PadStateButton
     D_2P,
     E_2P,
     F_2P,
+    G_2P,
+    H_2P,
+    I_2P,
+    J_2P,
     MAX_2P,
 };
 inline static constexpr int N_PAD_STATE_BUTTONS = static_cast<int>(PadStateButton::MAX);
+
+// PadStateButton without CMD maps to .eamacro logical IDs by shifting right 1.
+static_assert(static_cast<int>(PadStateButton::COIN) - 1 == 0);
+static_assert(static_cast<int>(PadStateButton::J) - 1 == 15);
 
 class PadState
 {
@@ -82,6 +96,7 @@ public:
     void setRapidFireDiv(int v) { rapidFireDiv_ = v; }
 
     void setRapidFirePhaseMask(uint32_t v) { rapidFirePhase_ = v; }
+    void setRapidFireSyncMask(uint32_t v) { rapidFireSyncMask_ = v; }
 
     void reset();
     void dump() const;
@@ -93,7 +108,10 @@ private:
     int rapidFireDiv_ = 1;
     uint32_t rapidFireMask_ = 0;
     uint32_t rapidFirePhase_ = 0xaaaaaaaa;
+    uint32_t rapidFireSyncMask_ = 0;
     uint32_t vsyncCount_ = 0;
+
+    std::array<uint32_t, MAX_BUTTONS> rapidSyncStart_{};
 
     uint32_t mappedRapidFireMask_ = 0;
 

@@ -91,6 +91,7 @@ public:
     int getRapidFireDiv(int port) const;
     void setRapidFireDiv(int port, int v);
     void setRapidFirePhaseMask(uint32_t v);
+    void setRapidFireSyncMask(uint32_t v);
 
     const PadState::AnalogState &getAnalogState(int port) const;
 
@@ -156,6 +157,11 @@ public:
     void setTwinPortMode(bool f)
     {
         twinPortMode_ = f;
+    }
+
+    void setVirtualButtonConfig(bool enabled)
+    {
+        virtualButtonConfig_ = enabled;
     }
 
     void setAnalogMode(AppConfig::AnalogMode mode)
@@ -288,6 +294,7 @@ private:
     bool normalModeLED_ = true;
 
     bool twinPortMode_ = false;
+    bool virtualButtonConfig_ = false;
     AppConfig::AnalogMode analogMode_{};
 
     PadTranslator translator_;

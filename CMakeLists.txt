@@ -56,6 +56,8 @@ add_executable(arcade_play
         usb_midi.cpp
         usb_storage.cpp
         config_json.cpp
+        macro_profile.cpp
+        macro_storage.cpp
         ${FATFS_BUILD_DIR}/ff.c
         ${FATFS_BUILD_DIR}/ffunicode.c
         lcd.cpp
@@ -69,7 +71,7 @@ add_executable(arcade_play
         )
 
 pico_set_program_name(arcade_play "arcade_play")
-pico_set_program_version(arcade_play "0.1")
+pico_set_program_version(arcade_play "1.3.0-beta.1")
 
 pico_enable_stdio_uart(arcade_play 1)
 pico_enable_stdio_usb(arcade_play 0)

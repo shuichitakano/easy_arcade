@@ -14,7 +14,11 @@ inline constexpr uint32_t CPU_CLOCK = 125000000;
 #if EA_V2
 
 #define BOARD_NAME "EA2"
-#define BOARD_VERSION "V1.2.0"
+#define BOARD_VERSION "V1.3.0b1"
+
+// * v1.3.0-beta.1
+//  - USBメモリからの .eamacro インポートと8件のLRU保存に対応
+//  - プレイヤー別マクロ実行と CMD+左右によるマクロセット切替に対応
 
 // * v1.0.2
 //  - All Reset メニューでロータリーエンコーダの初期化反映が漏れていたのを修正

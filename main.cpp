@@ -25,6 +25,7 @@
 #include "app_config.h"
 #include "font.h"
 #include "serializer.h"
+#include "macro_storage.h"
 #include "pca9555.h"
 #include "i2c_manager.h"
 #include "debug.h"
@@ -40,6 +41,43 @@ namespace
     Menu menu_{&textScreen_};
 
     AppConfig appConfig_;
+
+    Macro::Storage macroStorage_;
+    Macro::PlayerRuntime macroPlayers_[2];
+    std::vector<std::string> macroUsbFiles_;
+    int macroImportSelection_ = 0;
+    int macroSelect_ = -1;
+    uint32_t macroPreviousPads_[2]{};
+    uint32_t macroOutput_ = 0;
+    uint32_t macroLastVSync_ = ~0u;
+
+    void attachMacroProfile()
+    {
+        const auto *profile = macroStorage_.activeProfile();
+        for (int player = 0; player < 2; ++player)
+            macroPlayers_[player].attach(profile);
+        macroSelect_ = macroStorage_.activeSlot();
+        macroOutput_ = 0;
+        macroLastVSync_ = ~0u;
+        macroPreviousPads_[0] = macroPreviousPads_[1] = 0;
+    }
+
+    int highestMacroSlot()
+    {
+        for (int i = Macro::PROFILE_SLOTS - 1; i >= 0; --i)
+            if (macroStorage_.slotUsed(i))
+                return i;
+        return -1;
+    }
+
+    void refreshMacroUsbFiles()
+    {
+        macroUsbFiles_ = macroStorage_.listUsbFiles();
+        if (macroUsbFiles_.empty())
+            macroImportSelection_ = 0;
+        else if (macroImportSelection_ >= static_cast<int>(macroUsbFiles_.size()))
+            macroImportSelection_ = macroUsbFiles_.size() - 1;
+    }
 
     struct PortMap
     {
@@ -481,20 +519,22 @@ void updateMIDIState();
 //     }
 // }
 
-void setRapidPhaseMask()
+void setRapidPhaseMasks()
 {
-    uint32_t m = 0;
+    uint32_t backMask = 0;
+    uint32_t syncMask = 0;
     int b = 1 << static_cast<int>(PadStateButton::A);
     for (int v : appConfig_.rapidPhase)
     {
-        if (v)
-        {
-            m |= b;
-        }
+        if (v == AppConfig::RAPID_BACK)
+            backMask |= b;
+        else if (v == AppConfig::RAPID_SYNC)
+            syncMask |= b;
         b <<= 1;
     }
-    DPRINT(("setRapidPhaseMask %08x\n", m));
-    PadManager::instance().setRapidFirePhaseMask(m);
+    DPRINT(("setRapidPhaseMasks back=%08x sync=%08x\n", backMask, syncMask));
+    PadManager::instance().setRapidFirePhaseMask(backMask);
+    PadManager::instance().setRapidFireSyncMask(syncMask);
 }
 
 void setRapidSettings()
@@ -528,6 +568,7 @@ void saveRapidSettings()
 void resetRapidSettings()
 {
     appConfig_.resetRapidPhase();
+    setRapidPhaseMasks();
 
     int i = 0;
     for (auto &rs : appConfig_.rapidSettings)
@@ -543,6 +584,11 @@ void resetRapidSettings()
 void setTwinPortSetting()
 {
     PadManager::instance().setTwinPortMode(appConfig_.twinPortMode);
+}
+
+void setVirtualButtonConfig()
+{
+    PadManager::instance().setVirtualButtonConfig(appConfig_.virtualButtonConfig);
 }
 
 void setAnalogMode()
@@ -735,11 +781,12 @@ void setupGPIO()
 
 void applySettings()
 {
-    setRapidPhaseMask();
+    setRapidPhaseMasks();
     setRapidSettings();
     setRotEncSettings(0);
     setRotEncSettings(1);
     setTwinPortSetting();
+    setVirtualButtonConfig();
     setAnalogMode();
     setupGPIO();
     initDACSensCurves();
@@ -811,6 +858,14 @@ char getButtonName(PadStateButton b)
         return 'E';
     case PadStateButton::F:
         return 'F';
+    case PadStateButton::G:
+        return 'G';
+    case PadStateButton::H:
+        return 'H';
+    case PadStateButton::I:
+        return 'I';
+    case PadStateButton::J:
+        return 'J';
     case PadStateButton::COIN:
         return 'c';
     case PadStateButton::START:
@@ -841,6 +896,10 @@ const char *getButtonConfigTextNormal(PadStateButton b)
         MAKE_BUTTON_STRING_CASE(D,     "Push D  ");
         MAKE_BUTTON_STRING_CASE(E,     "Push E  ");
         MAKE_BUTTON_STRING_CASE(F,     "Push F  ");
+        MAKE_BUTTON_STRING_CASE(G,     "Push G  ");
+        MAKE_BUTTON_STRING_CASE(H,     "Push H  ");
+        MAKE_BUTTON_STRING_CASE(I,     "Push I  ");
+        MAKE_BUTTON_STRING_CASE(J,     "Push J  ");
         MAKE_BUTTON_STRING_CASE(COIN,  "PushCOIN");
         MAKE_BUTTON_STRING_CASE(START, "PshSTART");
         MAKE_BUTTON_STRING_CASE(CMD,   "Push CMD");
@@ -865,6 +924,10 @@ const char *getButtonConfigText2PortMode(PadStateButton b)
         MAKE_BUTTON_STRING_CASE(D,     "1P D    ");
         MAKE_BUTTON_STRING_CASE(E,     "1P E    ");
         MAKE_BUTTON_STRING_CASE(F,     "1P F    ");
+        MAKE_BUTTON_STRING_CASE(G,     "1P G    ");
+        MAKE_BUTTON_STRING_CASE(H,     "1P H    ");
+        MAKE_BUTTON_STRING_CASE(I,     "1P I    ");
+        MAKE_BUTTON_STRING_CASE(J,     "1P J    ");
         MAKE_BUTTON_STRING_CASE(COIN,  "1P COIN ");
         MAKE_BUTTON_STRING_CASE(START, "1P START");
         MAKE_BUTTON_STRING_CASE(CMD,   "Push CMD");
@@ -878,6 +941,10 @@ const char *getButtonConfigText2PortMode(PadStateButton b)
         MAKE_BUTTON_STRING_CASE(D_2P,     "2P D    ");
         MAKE_BUTTON_STRING_CASE(E_2P,     "2P E    ");
         MAKE_BUTTON_STRING_CASE(F_2P,     "2P F    ");
+        MAKE_BUTTON_STRING_CASE(G_2P,     "2P G    ");
+        MAKE_BUTTON_STRING_CASE(H_2P,     "2P H    ");
+        MAKE_BUTTON_STRING_CASE(I_2P,     "2P I    ");
+        MAKE_BUTTON_STRING_CASE(J_2P,     "2P J    ");
         MAKE_BUTTON_STRING_CASE(COIN_2P,  "2P COIN ");
         MAKE_BUTTON_STRING_CASE(START_2P, "2P START");
         // clang-format on
@@ -915,13 +982,17 @@ void initMenu()
 {
     static const char *buttonDispModeText[] = {"Input", "Rapid", "None"};
     static const char *onOffText[] = {"Off", "On"};
-    static const char *inOutText[] = {"In", "Out"};
+    static const char *rapidPhaseText[] = {"Front", "Back", "Sync"};
     static const char *reverseText[] = {"Normal", "Reverse"};
     static const char *initPowerModeText[] = {"InitOff", "InitOn"};
     static const char *rapidModeText[] = {"Softw", "Synchro"};
     static const char *analogModeText[] = {"Disable", "2Axis2P", "4Axis1P"};
 
     menu_.setBlinkInterval(CPU_CLOCK / 2);
+
+    menu_.append("VBtnCfg", &appConfig_.virtualButtonConfig,
+                 onOffText, std::size(onOffText),
+                 [](Menu &) { setVirtualButtonConfig(); });
 
     PadManager::instance().setOnExitConfigFunc(
         []
@@ -1021,15 +1092,15 @@ void initMenu()
 
     auto onRapidPhaseChanged = [](Menu &m)
     {
-        setRapidPhaseMask();
+        setRapidPhaseMasks();
     };
 
-    menu_.append("Phase A", &appConfig_.rapidPhase[0], inOutText, 2, onRapidPhaseChanged);
-    menu_.append("Phase B", &appConfig_.rapidPhase[1], inOutText, 2, onRapidPhaseChanged);
-    menu_.append("Phase C", &appConfig_.rapidPhase[2], inOutText, 2, onRapidPhaseChanged);
-    menu_.append("Phase D", &appConfig_.rapidPhase[3], inOutText, 2, onRapidPhaseChanged);
-    menu_.append("Phase E", &appConfig_.rapidPhase[4], inOutText, 2, onRapidPhaseChanged);
-    menu_.append("Phase F", &appConfig_.rapidPhase[5], inOutText, 2, onRapidPhaseChanged);
+    menu_.append("Phase A", &appConfig_.rapidPhase[0], rapidPhaseText, std::size(rapidPhaseText), onRapidPhaseChanged);
+    menu_.append("Phase B", &appConfig_.rapidPhase[1], rapidPhaseText, std::size(rapidPhaseText), onRapidPhaseChanged);
+    menu_.append("Phase C", &appConfig_.rapidPhase[2], rapidPhaseText, std::size(rapidPhaseText), onRapidPhaseChanged);
+    menu_.append("Phase D", &appConfig_.rapidPhase[3], rapidPhaseText, std::size(rapidPhaseText), onRapidPhaseChanged);
+    menu_.append("Phase E", &appConfig_.rapidPhase[4], rapidPhaseText, std::size(rapidPhaseText), onRapidPhaseChanged);
+    menu_.append("Phase F", &appConfig_.rapidPhase[5], rapidPhaseText, std::size(rapidPhaseText), onRapidPhaseChanged);
 
     menu_.append(
         "InitRpd", "Press A", [](Menu &m)
@@ -1090,6 +1161,58 @@ void initMenu()
     {
         return usbStorageMounted();
     };
+
+    menu_.append(
+             "ImpMcro", &macroImportSelection_, {0, 255},
+             [](char *buf, size_t bufSize, int)
+             {
+                 if (macroUsbFiles_.empty())
+                     snprintf(buf, bufSize, "No File");
+                 else
+                     snprintf(buf, bufSize, "%.8s", macroUsbFiles_[macroImportSelection_].c_str());
+             },
+             [](Menu &)
+             {
+                 if (macroUsbFiles_.empty())
+                     macroImportSelection_ = 0;
+                 else
+                     macroImportSelection_ = std::min<int>(macroImportSelection_, macroUsbFiles_.size() - 1);
+             },
+             [](Menu &)
+             {
+                 Macro::Result result = Macro::Result::NO_FILE;
+                 if (!macroUsbFiles_.empty())
+                 {
+                     result = macroStorage_.importUsbFile(macroUsbFiles_[macroImportSelection_]);
+                     if (result == Macro::Result::OK)
+                         attachMacroProfile();
+                 }
+                 textScreen_.printInfo(0, 1, Macro::resultText(result));
+                 textScreen_.setInfoLayerClearTimer(CPU_CLOCK * 2);
+             })
+        .setConditionFunc(storageMenuCondition)
+        .setChangesConfig(false);
+
+    menu_.append(
+             "SelMcro", &macroSelect_, {-1, Macro::PROFILE_SLOTS - 1},
+             [](char *buf, size_t bufSize, int value)
+             {
+                 if (value < 0)
+                     snprintf(buf, bufSize, "Disable");
+                 else if (macroStorage_.slotUsed(value))
+                     snprintf(buf, bufSize, "%.8s", macroStorage_.slotProfileName(value));
+                 else
+                     snprintf(buf, bufSize, "Empty");
+             },
+             [](Menu &)
+             {
+                 macroSelect_ = std::min(macroSelect_, highestMacroSlot());
+                 if (macroStorage_.select(macroSelect_))
+                     attachMacroProfile();
+                 else
+                     macroSelect_ = macroStorage_.activeSlot();
+             })
+        .setChangesConfig(false);
 
     menu_.append("ImpCfg", "A+START", [](Menu &m)
                  {
@@ -1429,9 +1552,58 @@ void updateOutput()
     bool hasMPAdapter = !!multiPlayerAdapter_;
 
     auto &padManager = PadManager::instance();
+    uint32_t states[2] = {padManager.getButtons(0), padManager.getButtons(1)};
+    if (macroStorage_.enabled())
+    {
+        uint32_t rawPads[2] = {padManager.getNonRapidButtons(0),
+                               padManager.getNonRapidButtons(1)};
+        const auto *profile = macroStorage_.activeProfile();
+        for (int player = 0; player < 2; ++player)
+        {
+            const uint32_t rising = rawPads[player] & ~macroPreviousPads_[player];
+            const uint32_t cmdMask = 1u << static_cast<int>(PadStateButton::CMD);
+            const uint32_t leftMask = 1u << static_cast<int>(PadStateButton::LEFT);
+            const uint32_t rightMask = 1u << static_cast<int>(PadStateButton::RIGHT);
+            if (!menu_.isOpened() && (rawPads[player] & cmdMask) && profile->setCount > 1)
+            {
+                const bool left = rising & leftMask;
+                const bool right = rising & rightMask;
+                if (left != right)
+                {
+                    macroPlayers_[player].changeSet(right ? 1 : -1);
+                    char line[9];
+                    snprintf(line, sizeof(line), "P%d Set%d", player + 1,
+                             macroPlayers_[player].currentSet() + 1);
+                    textScreen_.printInfo(0, 0, line);
+                    const auto set = macroPlayers_[player].currentSet();
+                    textScreen_.printInfo(0, 1, profile->setNames[set].c_str());
+                    textScreen_.setInfoLayerClearTimer(CPU_CLOCK);
+                }
+                if (rawPads[player] & (leftMask | rightMask))
+                {
+                    rawPads[player] &= ~(leftMask | rightMask);
+                    states[player] &= ~(leftMask | rightMask);
+                }
+            }
+            macroPreviousPads_[player] = padManager.getNonRapidButtons(player);
+        }
+        const uint32_t frame = vsyncDetector_.getVSyncCounter();
+        if (frame != macroLastVSync_)
+        {
+            const uint32_t p1 = macroPlayers_[0].processFrame(rawPads[0] >> 1,
+                                                              states[0] >> 1, frame);
+            const uint32_t p2 = macroPlayers_[1].processFrame(rawPads[1] >> 1,
+                                                              states[1] >> 1, frame);
+            macroOutput_ = p1 | ((p2 & Macro::PLAYER_OUTPUT_MASK) << 12);
+            macroLastVSync_ = frame;
+        }
+        states[0] = (macroOutput_ & Macro::PLAYER_OUTPUT_MASK) << 1;
+        states[1] = ((macroOutput_ >> 12) & Macro::PLAYER_OUTPUT_MASK) << 1;
+    }
+
     for (int port = 0; port < 2; ++port)
     {
-        auto st = padManager.getButtons(port);
+        auto st = states[port];
 #if !defined(NDEBUG) && 0
         if (port == 0)
         {
@@ -1482,6 +1654,7 @@ bool powerOn()
 
         PadManager::instance().reset();
         PadManager::instance().enterNormalMode();
+        attachMacroProfile();
         vsyncDetector_.reset();
         vsyncDetector_.setEnableFPSCount(true);
 
@@ -1573,6 +1746,9 @@ void i2cTest()
 int main()
 {
     stdio_init_all();
+
+    macroStorage_.init();
+    attachMacroProfile();
 
 #ifdef RASPBERRYPI_PICO_W
     if (cyw43_arch_init())
@@ -1745,6 +1921,16 @@ int main()
 
         tuh_task();
         usbStorageTask();
+        static bool previousStorageMounted = false;
+        const bool storageMounted = usbStorageMounted();
+        if (storageMounted != previousStorageMounted)
+        {
+            previousStorageMounted = storageMounted;
+            if (storageMounted)
+                refreshMacroUsbFiles();
+            else
+                macroUsbFiles_.clear();
+        }
         updateMIDIState();
     }
     return 0;
