@@ -990,10 +990,6 @@ void initMenu()
 
     menu_.setBlinkInterval(CPU_CLOCK / 2);
 
-    menu_.append("VBtnCfg", &appConfig_.virtualButtonConfig,
-                 onOffText, std::size(onOffText),
-                 [](Menu &) { setVirtualButtonConfig(); });
-
     PadManager::instance().setOnExitConfigFunc(
         []
         {
@@ -1003,6 +999,8 @@ void initMenu()
             menu_.refresh();
         });
 
+    // BtnCfg must remain the first item. The CONFIG button opens the menu on
+    // this item, and its menuButton handler is required to release the lock.
     menu_.append(
         "BtnCfg", "LngPress", [](Menu &m)
         { 
@@ -1010,6 +1008,9 @@ void initMenu()
             textScreen_.printMain(0, 0, "BtConfig");
             PadManager::instance().enterConfigMode(); },
         true /* config button */);
+    menu_.append("VBtnCfg", &appConfig_.virtualButtonConfig,
+                 onOffText, std::size(onOffText),
+                 [](Menu &) { setVirtualButtonConfig(); });
     menu_.append(
              "AnlgCfg", "LngPress", [](Menu &m)
              { 
