@@ -1,6 +1,7 @@
 #include "macro_profile.h"
 #include "rapid_timing.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -108,6 +109,47 @@ std::vector<uint8_t> makeProfileBytes()
     return bytes;
 }
 
+std::vector<uint8_t> makeV11ProfileBytes()
+{
+    std::vector<uint8_t> bytes{'A', 'M', 'A', 'P', 1, 1, 16, 0,
+                               0, 0, 0, 0, 0, 0, 0, 0};
+    std::vector<uint8_t> direct;
+    for (int i = 0; i < 32; ++i)
+        append24(direct, i == 6 ? 1u << 4 : 0);
+    addSection(bytes, 1, direct);
+
+    std::vector<uint8_t> bindings;
+    append16(bindings, 1);
+    bindings.insert(bindings.end(), {6, 0, 0, 0x11}); // loop + loop sync
+    addSection(bytes, 2, bindings);
+
+    constexpr uint32_t directions = 0x3cu;
+    std::vector<uint8_t> definitions{1, 0, 2, 0, 1};
+    append24(definitions, directions);
+    definitions.push_back(0);
+    append24(definitions, 1u << 2);
+    append16(definitions, 1);
+    append24(definitions, 1u << 5);
+    append16(definitions, 3);
+    addSection(bytes, 3, definitions);
+
+    std::vector<uint8_t> selectors{1, 0, 7, 8, 0, 0, 0, 0, 0, 1, 0};
+    append24(selectors, 1u << 6);
+    append24(selectors, 1u << 7);
+    addSection(bytes, 4, selectors);
+
+    std::vector<uint8_t> rapid;
+    for (int i = 0; i < 32; ++i)
+        rapid.insert(rapid.end(), {0, 0, 2});
+    addSection(bytes, 5, rapid);
+    addSection(bytes, 6, {1, 0});
+    addSection(bytes, 7, {1, 0});
+
+    write32(bytes, 8, bytes.size());
+    write32(bytes, 12, Macro::crc32(bytes.data() + 16, bytes.size() - 16));
+    return bytes;
+}
+
 void parserTests()
 {
     auto bytes = makeProfileBytes();
@@ -119,6 +161,8 @@ void parserTests()
     assert(profile.mappings[6] == (1u << 6));
     assert(profile.sequences.size() == 1);
     assert(profile.sequences[0].name == "Fire");
+    assert(profile.sequences[0].composition == 1);
+    assert(profile.sequences[0].suppression == 0x3c);
     assert(profile.bindings.size() == 1);
     assert(profile.selectors.size() == 1);
     assert(profile.selectors[0].stateNames[1] == "High");
@@ -129,6 +173,18 @@ void parserTests()
 
     damaged = bytes;
     damaged[4] = 2;
+    assert(Macro::parse(damaged.data(), damaged.size(), profile) == Macro::Result::BAD_HEADER);
+
+    auto v11 = makeV11ProfileBytes();
+    assert(Macro::parse(v11.data(), v11.size(), profile) == Macro::Result::OK);
+    assert(profile.sequences[0].composition == 1);
+    assert(profile.sequences[0].suppression == 0x3c);
+    assert(profile.bindings[0].flags == 0x11);
+    assert(profile.selectors[0].occupancy == (1u << 6));
+
+    damaged = v11;
+    damaged[5] = 2; // unknown minor versions are never inferred from section sizes
+    write32(damaged, 12, Macro::crc32(damaged.data() + 16, damaged.size() - 16));
     assert(Macro::parse(damaged.data(), damaged.size(), profile) == Macro::Result::BAD_HEADER);
 
     // Exercise malformed TLV lengths, counts, IDs and masks under sanitizers.
@@ -248,6 +304,62 @@ void runtimeModeTests()
     assert(RapidTiming::synchronizedOn(8, 7, 2));
     assert(!RapidTiming::synchronizedOn(9, 7, 2));
 }
+
+void v11RuntimeTests()
+{
+    Macro::Profile profile;
+    profile.setCount = 1;
+    profile.frameStep = 1;
+    for (auto &rapid : profile.rapidFire)
+        rapid = {false, 0, 2};
+
+    // Automatic/custom suppression replaces only its owned outputs.
+    profile.mappings[6] = (1u << 4) | (1u << 6);
+    profile.sequences = {{0, 0, {{1u << 2, 3}}, "Suppress", 1, 0x3c}};
+    profile.bindings = {{6, 0, 0, 0}};
+    Macro::PlayerRuntime player;
+    player.attach(&profile);
+    assert(player.processFrame(1u << 6, 1u << 6, 0) == ((1u << 2) | (1u << 6)));
+
+    // Sequences started on one frame are one composition rank, independent of
+    // binding order. A later rank overrides directions from the older rank.
+    profile.mappings = {};
+    profile.sequences = {
+        {0, 0, {{1u << 4, 4}}, "Left", 2, 0x3c},
+        {1, 0, {{1u << 5, 4}}, "Right", 2, 0x3c},
+        {2, 0, {{1u << 2, 4}}, "Down", 2, 0x3c},
+    };
+    profile.bindings = {{6, 0, 0, 0}, {6, 1, 0, 0}, {7, 2, 0, 0}};
+    player.attach(&profile);
+    assert(player.processFrame(1u << 6, 0, 10) == ((1u << 4) | (1u << 5)));
+    assert(player.processFrame((1u << 6) | (1u << 7), 0, 11) == (1u << 2));
+    std::reverse(profile.bindings.begin(), profile.bindings.end());
+    player.attach(&profile);
+    assert(player.processFrame(1u << 6, 0, 10) == ((1u << 4) | (1u << 5)));
+    assert(player.processFrame((1u << 6) | (1u << 7), 0, 11) == (1u << 2));
+
+    // Selector occupancy clears direct/sequence output before state output.
+    profile.sequences.clear();
+    profile.bindings.clear();
+    profile.mappings[6] = 1u << 6;
+    profile.selectors = {{0, 7, 8, 0, 0, 0, false, 0,
+                          {1u << 7}, "Mode", {"Only"}, 1u << 6}};
+    player.attach(&profile);
+    assert(player.processFrame(1u << 6, 1u << 6, 0) == (1u << 7));
+
+    // Loop Sync uses the global VSync phase and finishes before the next tick 0.
+    profile.selectors.clear();
+    profile.mappings = {};
+    profile.sequences = {{0, 0, {{1u << 6, 1}, {0, 3}}, "Sync"}};
+    profile.bindings = {{6, 0, 0, 0x11}};
+    player.attach(&profile);
+    assert(player.processFrame(1u << 6, 0, 2) == 0);
+    assert(player.processFrame(0, 0, 3) == 0);
+    assert(player.processFrame(0, 0, 4) == 0); // stopped before synchronized tick 0
+
+    player.attach(&profile);
+    assert(player.processFrame(1u << 6, 0, 4) == (1u << 6));
+}
 }
 
 int main(int argc, char **argv)
@@ -255,6 +367,7 @@ int main(int argc, char **argv)
     parserTests();
     runtimeTests();
     runtimeModeTests();
+    v11RuntimeTests();
     if (argc > 1)
     {
         std::ifstream input(argv[1], std::ios::binary);

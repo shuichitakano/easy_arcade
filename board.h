@@ -14,7 +14,11 @@ inline constexpr uint32_t CPU_CLOCK = 125000000;
 #if EA_V2
 
 #define BOARD_NAME "EA2"
-#define BOARD_VERSION "V1.3.0b2"
+#define BOARD_VERSION "V1.3.0b3"
+
+// * v1.3.0-beta.3
+//  - .eamacro v1.1の合成方式、Loop Sync、セレクタ占有マスクに対応
+//  - v1.0マクロを自動合成へ移行する互換読み込みに対応
 
 // * v1.3.0-beta.2
 //  - USBメモリのexFATファイルシステムに対応

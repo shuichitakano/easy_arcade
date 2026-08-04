@@ -47,6 +47,9 @@ struct Sequence
     uint8_t loopStart = 0;
     std::vector<Step> steps;
     std::string name;
+    // 0: OR, 1: automatic lever suppression, 2: custom suppression.
+    uint8_t composition = 0;
+    uint32_t suppression = 0;
 };
 
 struct Binding
@@ -70,6 +73,7 @@ struct Selector
     std::vector<uint32_t> outputs;
     std::string name;
     std::vector<std::string> stateNames;
+    uint32_t occupancy = 0;
 };
 
 struct Profile
@@ -116,6 +120,10 @@ private:
         uint16_t ticksLeft = 0;
         uint8_t framesLeft = 0;
         uint32_t output = 0;
+        uint32_t suppression = 0;
+        uint64_t startOrder = 0;
+        uint32_t syncTick = 0;
+        bool releasePending = false;
     };
     struct SelectorState
     {
@@ -124,14 +132,17 @@ private:
     };
 
     uint32_t transformOutput(uint32_t output, uint8_t flags) const;
-    void startPlayback(size_t bindingIndex);
+    void startPlayback(size_t bindingIndex, uint32_t frameCounter);
     void advancePlayback(size_t bindingIndex, uint32_t rawLogical);
+    void updateSynchronizedPlayback(size_t bindingIndex, uint32_t frameCounter);
 
     const Profile *profile_ = nullptr;
     std::vector<Playback> playbacks_;
+    std::vector<size_t> activeScratch_;
     std::vector<SelectorState> selectorStates_;
     std::array<uint32_t, LOGICAL_BUTTONS> syncStartFrames_{};
     uint32_t previousRaw_ = 0;
+    uint64_t currentFrameOrder_ = 0;
     uint8_t currentSet_ = 0;
 };
 }

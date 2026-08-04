@@ -17,9 +17,11 @@ constexpr size_t MACRO_SETS_SIZE = 2;
 constexpr size_t DIRECT_MAPPING_RECORD_SIZE = 3;
 constexpr size_t RAPID_FIRE_RECORD_SIZE = 3;
 constexpr size_t BINDING_RECORD_SIZE = 4;
-constexpr size_t SEQUENCE_HEADER_SIZE = 4;
+constexpr size_t SEQUENCE_V10_HEADER_SIZE = 4;
+constexpr size_t SEQUENCE_V11_HEADER_SIZE = 8;
 constexpr size_t SEQUENCE_STEP_SIZE = 5;
-constexpr size_t SELECTOR_HEADER_SIZE = 10;
+constexpr size_t SELECTOR_V10_HEADER_SIZE = 10;
+constexpr size_t SELECTOR_V11_HEADER_SIZE = 13;
 constexpr size_t METADATA_HEADER_SIZE = 10;
 constexpr size_t MAX_SEQUENCES = 64;
 constexpr size_t MAX_BINDINGS = 256;
@@ -28,7 +30,8 @@ constexpr size_t MAX_SETS = 16;
 constexpr size_t MAX_SELECTORS = 8;
 constexpr size_t MAX_SELECTOR_STATES = 64;
 constexpr uint8_t FORMAT_MAJOR_VERSION = 1;
-constexpr uint8_t FORMAT_MINOR_VERSION = 0;
+constexpr uint8_t FORMAT_MINOR_V10 = 0;
+constexpr uint8_t FORMAT_MINOR_V11 = 1;
 constexpr uint8_t METADATA_VERSION = 1;
 constexpr uint8_t MIN_RAPID_DIVISOR = 2;
 constexpr uint8_t MAX_RAPID_DIVISOR = 60;
@@ -61,8 +64,17 @@ enum BindingFlags : uint8_t
     BINDING_CANCEL_ON_RELEASE = 1u << 1,
     BINDING_FLIP_HORIZONTAL = 1u << 2,
     BINDING_FLIP_VERTICAL = 1u << 3,
+    BINDING_LOOP_SYNC = 1u << 4,
     BINDING_FLAGS_MASK = BINDING_LOOP | BINDING_CANCEL_ON_RELEASE |
-                         BINDING_FLIP_HORIZONTAL | BINDING_FLIP_VERTICAL,
+                         BINDING_FLIP_HORIZONTAL | BINDING_FLIP_VERTICAL |
+                         BINDING_LOOP_SYNC,
+};
+
+enum CompositionMode : uint8_t
+{
+    COMPOSITION_OR = 0,
+    COMPOSITION_AUTO_LEVER = 1,
+    COMPOSITION_CUSTOM = 2,
 };
 
 constexpr uint8_t RAPID_OVERRIDE = 1u << 0;
@@ -204,6 +216,8 @@ struct SequenceHeader
     uint8_t id;
     uint8_t stepCount;
     uint8_t loopStart;
+    uint8_t composition;
+    uint32_t suppression;
     uint8_t reserved;
 };
 
@@ -219,6 +233,7 @@ struct SelectorHeader
     uint8_t neutralFrames;
     uint8_t stateCount;
     uint8_t reserved;
+    uint32_t occupancy;
 };
 
 struct MetadataHeader
@@ -245,6 +260,20 @@ uint32_t swapBits(uint32_t value, int a, int b)
     if (ba != bb)
         value ^= (1u << a) | (1u << b);
     return value;
+}
+
+uint32_t automaticSuppression(const std::vector<Step> &steps)
+{
+    uint32_t used = 0;
+    for (const auto &step : steps)
+        used |= step.output;
+    uint32_t suppression = 0;
+    constexpr uint32_t directions = (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5);
+    if (used & directions)
+        suppression |= directions;
+    if (used & (directions << 12))
+        suppression |= directions << 12;
+    return suppression;
 }
 }
 
@@ -294,7 +323,7 @@ const Section &getSection(const SectionTable &sections, SectionType type)
     return sections[static_cast<size_t>(type)];
 }
 
-Result parseHeader(const uint8_t *data, size_t size)
+Result parseHeader(const uint8_t *data, size_t size, uint8_t &minorVersion)
 {
     if (!data || size < FILE_HEADER_SIZE)
         return Result::BAD_HEADER;
@@ -314,11 +343,12 @@ Result parseHeader(const uint8_t *data, size_t size)
         !reader.readU32(payloadCrc))
         return Result::BAD_HEADER;
     if (std::memcmp(magic, "AMAP", FILE_MAGIC_SIZE) || major != FORMAT_MAJOR_VERSION ||
-        minor != FORMAT_MINOR_VERSION ||
+        (minor != FORMAT_MINOR_V10 && minor != FORMAT_MINOR_V11) ||
         headerSize != FILE_HEADER_SIZE || totalSize != size)
         return Result::BAD_HEADER;
     if (payloadCrc != crc32(data + FILE_HEADER_SIZE, size - FILE_HEADER_SIZE))
         return Result::BAD_CRC;
+    minorVersion = minor;
     return Result::OK;
 }
 
@@ -419,7 +449,7 @@ Result parseRapidFire(const Section &section, Profile &profile)
     return Result::OK;
 }
 
-Result parseSequences(const Section &section, Profile &profile)
+Result parseSequences(const Section &section, uint8_t minorVersion, Profile &profile)
 {
     ByteReader reader(section.data, section.size);
     uint8_t sequenceCount;
@@ -431,12 +461,23 @@ Result parseSequences(const Section &section, Profile &profile)
     for (size_t n = 0; n < sequenceCount; ++n)
     {
         SequenceHeader header;
-        if (reader.remaining() < SEQUENCE_HEADER_SIZE || !reader.readU8(header.id) ||
-            !reader.readU8(header.stepCount) || !reader.readU8(header.loopStart) ||
-            !reader.readU8(header.reserved))
+        header.composition = COMPOSITION_OR;
+        header.suppression = 0;
+        const size_t headerSize = minorVersion == FORMAT_MINOR_V11 ?
+                                      SEQUENCE_V11_HEADER_SIZE : SEQUENCE_V10_HEADER_SIZE;
+        if (reader.remaining() < headerSize || !reader.readU8(header.id) ||
+            !reader.readU8(header.stepCount) || !reader.readU8(header.loopStart))
+            return Result::BAD_SECTION;
+        if (minorVersion == FORMAT_MINOR_V11)
+        {
+            if (!reader.readU8(header.composition) || !reader.readU24(header.suppression) ||
+                !reader.readU8(header.reserved))
+                return Result::BAD_SECTION;
+        }
+        else if (!reader.readU8(header.reserved))
             return Result::BAD_SECTION;
         if (!header.stepCount || header.loopStart >= header.stepCount || header.reserved ||
-            !ids.insert(header.id).second)
+            header.composition > COMPOSITION_CUSTOM || !ids.insert(header.id).second)
             return Result::BAD_VALUE;
 
         totalSteps += header.stepCount;
@@ -447,6 +488,8 @@ Result parseSequences(const Section &section, Profile &profile)
         Sequence sequence;
         sequence.id = header.id;
         sequence.loopStart = header.loopStart;
+        sequence.composition = header.composition;
+        sequence.suppression = header.suppression;
         sequence.steps.reserve(header.stepCount);
         for (size_t i = 0; i < header.stepCount; ++i)
         {
@@ -457,13 +500,25 @@ Result parseSequences(const Section &section, Profile &profile)
                 return Result::BAD_VALUE;
             sequence.steps.push_back(step);
         }
+        // Legacy profiles did not encode a composition mode. When importing
+        // them, use the safer current automatic lever suppression behavior.
+        if (minorVersion == FORMAT_MINOR_V10)
+        {
+            sequence.composition = COMPOSITION_AUTO_LEVER;
+            sequence.suppression = automaticSuppression(sequence.steps);
+        }
+        if ((sequence.composition == COMPOSITION_OR && sequence.suppression) ||
+            (sequence.composition == COMPOSITION_AUTO_LEVER &&
+             sequence.suppression != automaticSuppression(sequence.steps)) ||
+            !validOutput(sequence.suppression, profile.twoPlayerOutputs))
+            return Result::BAD_VALUE;
         sequence.name = "Macro " + std::to_string(sequence.id + 1);
         profile.sequences.push_back(std::move(sequence));
     }
     return reader.remaining() ? Result::BAD_SECTION : Result::OK;
 }
 
-Result parseBindings(const Section &section, Profile &profile)
+Result parseBindings(const Section &section, uint8_t minorVersion, Profile &profile)
 {
     ByteReader reader(section.data, section.size);
     uint16_t bindingCount;
@@ -481,16 +536,21 @@ Result parseBindings(const Section &section, Profile &profile)
         const uint32_t key = (static_cast<uint32_t>(binding.setId) << 16) |
                              (static_cast<uint32_t>(binding.logicalId) << 8) |
                              binding.sequenceId;
+        const auto *sequence = profile.findSequence(binding.sequenceId);
+        const uint8_t flagMask = minorVersion == FORMAT_MINOR_V11 ?
+                                     BINDING_FLAGS_MASK :
+                                     static_cast<uint8_t>(BINDING_FLAGS_MASK & ~BINDING_LOOP_SYNC);
         if (binding.logicalId >= LOGICAL_BUTTONS || binding.setId >= profile.setCount ||
-            (binding.flags & ~BINDING_FLAGS_MASK) ||
-            !profile.findSequence(binding.sequenceId) || !bindingKeys.insert(key).second)
+            (binding.flags & ~flagMask) || !sequence || !bindingKeys.insert(key).second ||
+            ((binding.flags & BINDING_LOOP_SYNC) &&
+             (!(binding.flags & BINDING_LOOP) || sequence->loopStart != 0)))
             return Result::BAD_VALUE;
         profile.bindings.push_back(binding);
     }
     return Result::OK;
 }
 
-Result parseSelectors(const Section &section, Profile &profile)
+Result parseSelectors(const Section &section, uint8_t minorVersion, Profile &profile)
 {
     ByteReader reader(section.data, section.size);
     uint8_t selectorCount;
@@ -498,15 +558,21 @@ Result parseSelectors(const Section &section, Profile &profile)
         return Result::BAD_VALUE;
 
     std::set<uint8_t> ids;
+    uint32_t occupied = 0;
     for (size_t n = 0; n < selectorCount; ++n)
     {
         SelectorHeader header;
-        if (reader.remaining() < SELECTOR_HEADER_SIZE || !reader.readU8(header.id) ||
+        header.occupancy = 0;
+        const size_t headerSize = minorVersion == FORMAT_MINOR_V11 ?
+                                      SELECTOR_V11_HEADER_SIZE : SELECTOR_V10_HEADER_SIZE;
+        if (reader.remaining() < headerSize || !reader.readU8(header.id) ||
             !reader.readU8(header.increment) || !reader.readU8(header.decrement) ||
             !reader.readU8(header.minimum) || !reader.readU8(header.maximum) ||
             !reader.readU8(header.initial) || !reader.readU8(header.flags) ||
             !reader.readU8(header.neutralFrames) || !reader.readU8(header.stateCount) ||
             !reader.readU8(header.reserved))
+            return Result::BAD_SECTION;
+        if (minorVersion == FORMAT_MINOR_V11 && !reader.readU24(header.occupancy))
             return Result::BAD_SECTION;
         if (!ids.insert(header.id).second || header.increment >= LOGICAL_BUTTONS ||
             header.decrement >= LOGICAL_BUTTONS || header.increment == header.decrement ||
@@ -514,8 +580,11 @@ Result parseSelectors(const Section &section, Profile &profile)
             header.initial > header.maximum || (header.flags & ~SELECTOR_WRAP) ||
             header.reserved || !header.stateCount || header.stateCount > MAX_SELECTOR_STATES ||
             header.stateCount != header.maximum - header.minimum + 1 ||
+            !validOutput(header.occupancy, profile.twoPlayerOutputs) ||
+            (occupied & header.occupancy) ||
             reader.remaining() < static_cast<size_t>(header.stateCount) * DIRECT_MAPPING_RECORD_SIZE)
             return Result::BAD_VALUE;
+        occupied |= header.occupancy;
 
         Selector selector;
         selector.id = header.id;
@@ -526,6 +595,7 @@ Result parseSelectors(const Section &section, Profile &profile)
         selector.initial = header.initial;
         selector.wrap = header.flags & SELECTOR_WRAP;
         selector.neutralFrames = header.neutralFrames;
+        selector.occupancy = header.occupancy;
         selector.outputs.reserve(header.stateCount);
         for (size_t i = 0; i < header.stateCount; ++i)
         {
@@ -622,7 +692,8 @@ Result parseMetadata(const Section &section, Profile &profile)
 
 Result parse(const uint8_t *data, size_t size, Profile &out)
 {
-    Result result = parseHeader(data, size);
+    uint8_t minorVersion = 0;
+    Result result = parseHeader(data, size, minorVersion);
     if (result != Result::OK)
         return result;
 
@@ -646,13 +717,14 @@ Result parse(const uint8_t *data, size_t size, Profile &out)
         return result;
 
     if (const auto &section = getSection(sections, SectionType::SEQUENCE_DEFINITIONS))
-        if ((result = parseSequences(section, profile)) != Result::OK)
+        if ((result = parseSequences(section, minorVersion, profile)) != Result::OK)
             return result;
-    if ((result = parseBindings(getSection(sections, SectionType::SEQUENCE_BINDING), profile)) !=
+    if ((result = parseBindings(getSection(sections, SectionType::SEQUENCE_BINDING),
+                                minorVersion, profile)) !=
         Result::OK)
         return result;
     if (const auto &section = getSection(sections, SectionType::STATE_SELECTORS))
-        if ((result = parseSelectors(section, profile)) != Result::OK)
+        if ((result = parseSelectors(section, minorVersion, profile)) != Result::OK)
             return result;
     if (const auto &section = getSection(sections, SectionType::METADATA))
         if ((result = parseMetadata(section, profile)) != Result::OK)
@@ -672,8 +744,11 @@ void PlayerRuntime::attach(const Profile *profile)
 void PlayerRuntime::reset()
 {
     previousRaw_ = 0;
+    currentFrameOrder_ = 0;
     syncStartFrames_ = {};
     playbacks_.assign(profile_ ? profile_->bindings.size() : 0, {});
+    activeScratch_.clear();
+    activeScratch_.reserve(playbacks_.size());
     selectorStates_.assign(profile_ ? profile_->selectors.size() : 0, {});
     if (profile_)
     {
@@ -710,7 +785,7 @@ uint32_t PlayerRuntime::transformOutput(uint32_t output, uint8_t flags) const
     return output;
 }
 
-void PlayerRuntime::startPlayback(size_t bindingIndex)
+void PlayerRuntime::startPlayback(size_t bindingIndex, uint32_t frameCounter)
 {
     auto &playback = playbacks_[bindingIndex];
     if (playback.active)
@@ -720,10 +795,45 @@ void PlayerRuntime::startPlayback(size_t bindingIndex)
     if (!sequence || sequence->steps.empty())
         return;
     playback.active = true;
+    playback.releasePending = false;
+    playback.startOrder = currentFrameOrder_;
     playback.step = 0;
     playback.ticksLeft = sequence->steps[0].ticks;
     playback.framesLeft = profile_->frameStep;
     playback.output = transformOutput(sequence->steps[0].output, binding.flags);
+    playback.suppression = transformOutput(sequence->suppression, binding.flags);
+    if (binding.flags & BINDING_LOOP_SYNC)
+        updateSynchronizedPlayback(bindingIndex, frameCounter);
+}
+
+void PlayerRuntime::updateSynchronizedPlayback(size_t bindingIndex, uint32_t frameCounter)
+{
+    auto &playback = playbacks_[bindingIndex];
+    if (!playback.active)
+        return;
+    const auto &binding = profile_->bindings[bindingIndex];
+    const auto *sequence = profile_->findSequence(binding.sequenceId);
+    uint32_t totalTicks = 0;
+    for (const auto &step : sequence->steps)
+        totalTicks += step.ticks;
+    const uint32_t playTick = (frameCounter / profile_->frameStep) % totalTicks;
+    if (playback.releasePending && playTick == 0 && playback.syncTick != 0)
+    {
+        playback = {};
+        return;
+    }
+    playback.syncTick = playTick;
+    uint32_t tick = playTick;
+    for (size_t i = 0; i < sequence->steps.size(); ++i)
+    {
+        if (tick < sequence->steps[i].ticks)
+        {
+            playback.step = static_cast<uint8_t>(i);
+            playback.output = transformOutput(sequence->steps[i].output, binding.flags);
+            return;
+        }
+        tick -= sequence->steps[i].ticks;
+    }
 }
 
 void PlayerRuntime::advancePlayback(size_t bindingIndex, uint32_t rawLogical)
@@ -740,7 +850,8 @@ void PlayerRuntime::advancePlayback(size_t bindingIndex, uint32_t rawLogical)
     uint8_t next = playback.step + 1;
     if (next >= sequence->steps.size())
     {
-        if ((binding.flags & BINDING_LOOP) && (rawLogical & (1u << binding.logicalId)))
+        if ((binding.flags & BINDING_LOOP) && !playback.releasePending &&
+            (rawLogical & (1u << binding.logicalId)))
             next = sequence->loopStart;
         else
         {
@@ -767,6 +878,9 @@ uint32_t PlayerRuntime::processFrame(uint32_t raw, uint32_t inherited,
         if (playbacks_[i].active && (binding.flags & BINDING_CANCEL_ON_RELEASE) &&
             !(raw & (1u << binding.logicalId)))
             playbacks_[i] = {};
+        else if (playbacks_[i].active && (binding.flags & BINDING_LOOP) &&
+                 !(raw & (1u << binding.logicalId)))
+            playbacks_[i].releasePending = true;
     }
 
     for (size_t i = 0; i < profile_->selectors.size(); ++i)
@@ -799,8 +913,13 @@ uint32_t PlayerRuntime::processFrame(uint32_t raw, uint32_t inherited,
     {
         const auto &binding = profile_->bindings[i];
         if (binding.setId == currentSet_ && (rising & (1u << binding.logicalId)))
-            startPlayback(i);
+            startPlayback(i, frameCounter);
     }
+
+    for (size_t i = 0; i < playbacks_.size(); ++i)
+        if (playbacks_[i].active &&
+            (profile_->bindings[i].flags & BINDING_LOOP_SYNC))
+            updateSynchronizedPlayback(i, frameCounter);
 
     uint32_t postRapid = 0;
     for (size_t i = 0; i < LOGICAL_BUTTONS; ++i)
@@ -830,9 +949,34 @@ uint32_t PlayerRuntime::processFrame(uint32_t raw, uint32_t inherited,
     for (size_t i = 0; i < LOGICAL_BUTTONS; ++i)
         if (postRapid & (1u << i))
             output |= profile_->mappings[i];
-    for (const auto &playback : playbacks_)
-        if (playback.active)
-            output |= playback.output;
+    activeScratch_.clear();
+    for (size_t i = 0; i < playbacks_.size(); ++i)
+        if (playbacks_[i].active)
+            activeScratch_.push_back(i);
+    std::sort(activeScratch_.begin(), activeScratch_.end(), [this](size_t a, size_t b) {
+        return playbacks_[a].startOrder < playbacks_[b].startOrder;
+    });
+    for (size_t first = 0; first < activeScratch_.size();)
+    {
+        const uint64_t order = playbacks_[activeScratch_[first]].startOrder;
+        uint32_t suppression = 0;
+        uint32_t sequenceOutput = 0;
+        size_t last = first;
+        while (last < activeScratch_.size() &&
+               playbacks_[activeScratch_[last]].startOrder == order)
+        {
+            suppression |= playbacks_[activeScratch_[last]].suppression;
+            sequenceOutput |= playbacks_[activeScratch_[last]].output;
+            ++last;
+        }
+        output = (output & ~suppression) | sequenceOutput;
+        first = last;
+    }
+
+    uint32_t occupancy = 0;
+    for (const auto &selector : profile_->selectors)
+        occupancy |= selector.occupancy;
+    output &= ~occupancy;
     for (size_t i = 0; i < profile_->selectors.size(); ++i)
     {
         const auto &selector = profile_->selectors[i];
@@ -842,11 +986,13 @@ uint32_t PlayerRuntime::processFrame(uint32_t raw, uint32_t inherited,
     }
 
     for (size_t i = 0; i < playbacks_.size(); ++i)
-        advancePlayback(i, raw);
+        if (!(profile_->bindings[i].flags & BINDING_LOOP_SYNC))
+            advancePlayback(i, raw);
     for (auto &state : selectorStates_)
         if (state.neutralLeft)
             --state.neutralLeft;
     previousRaw_ = raw;
+    ++currentFrameOrder_;
     return output;
 }
 }
