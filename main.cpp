@@ -1548,7 +1548,7 @@ void updateJAMMAOutput(uint32_t st, int port, bool hasMultiPlayerAdapter)
     setAnalogValue(ast, port);
 }
 
-void updateOutput()
+void updateOutput(uint32_t macroFrame)
 {
     bool hasMPAdapter = !!multiPlayerAdapter_;
 
@@ -1588,15 +1588,14 @@ void updateOutput()
             }
             macroPreviousPads_[player] = padManager.getNonRapidButtons(player);
         }
-        const uint32_t frame = vsyncDetector_.getVSyncCounter();
-        if (frame != macroLastVSync_)
+        if (macroFrame != macroLastVSync_)
         {
             const uint32_t p1 = macroPlayers_[0].processFrame(rawPads[0] >> 1,
-                                                              states[0] >> 1, frame);
+                                                              states[0] >> 1, macroFrame);
             const uint32_t p2 = macroPlayers_[1].processFrame(rawPads[1] >> 1,
-                                                              states[1] >> 1, frame);
+                                                              states[1] >> 1, macroFrame);
             macroOutput_ = p1 | ((p2 & Macro::PLAYER_OUTPUT_MASK) << 12);
-            macroLastVSync_ = frame;
+            macroLastVSync_ = macroFrame;
         }
         states[0] = (macroOutput_ & Macro::PLAYER_OUTPUT_MASK) << 1;
         states[1] = ((macroOutput_ >> 12) & Macro::PLAYER_OUTPUT_MASK) << 1;
@@ -1884,9 +1883,14 @@ int main()
                                  buttonWatcher_.isMiddleEdge());
                 }
 
+                // Use one V-Sync snapshot for both the legacy rapid-fire state and
+                // the macro output latched for this frame. Reading the detector
+                // again in updateOutput() could cross an IRQ boundary and latch the
+                // previous rapid-fire phase for an entire frame.
+                const uint32_t vsyncFrame = vsyncDetector_.getCounter();
                 if (appConfig_.rapidModeSynchro)
                 {
-                    padManager.setVSyncCount(vsyncDetector_.getCounter());
+                    padManager.setVSyncCount(vsyncFrame);
                 }
                 else
                 {
@@ -1899,7 +1903,7 @@ int main()
                                   buttonWatcher_.isReleaseEdge(),
                                   buttonWatcher_.isMiddleEdge());
 
-                updateOutput();
+                updateOutput(vsyncFrame);
 
                 if (HAS_LCD && padManager.isNormalMode())
                 {
