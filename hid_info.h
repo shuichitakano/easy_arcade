@@ -6,6 +6,8 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
+#include <tuple>
 #include <vector>
 #include <map>
 #include <array>
@@ -20,8 +22,10 @@ public:
         uint32_t usage_ = 0;
         int bitOfs_ = 0;
         int bits_ = 1;
-        int min_ = 0;
-        int max_ = 0;
+        int64_t min_ = 0;
+        int64_t max_ = 0;
+        uint32_t count_ = 1;
+        std::vector<uint32_t> arrayUsages_;
         bool isConst_ = false;
         bool isArray_ = false;
         bool isNullable_ = false;
@@ -54,12 +58,13 @@ public:
         std::vector<Report> inputs_;
         std::vector<Report> outputs_;
         std::vector<Report> features_;
+        std::array<uint32_t, 3> bitSizes_{}; // Input / Output / Feature
         // usage でソート
 
         void dump() const;
     };
 
-    int usageLV0_ = 0;
+    uint32_t usageLV0_ = 0;
 
     int vid_ = 0;
     int pid_ = 0;
@@ -82,5 +87,6 @@ public:
     void dump();
 
 private:
+    bool hasReportIDs_ = false;
     std::map<int, ReportSet> reportSets_; // reportID -> ReportSet
 };

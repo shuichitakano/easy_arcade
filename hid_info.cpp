@@ -6,6 +6,7 @@
 #include "hid_info.h"
 #include <cstdio>
 #include <algorithm>
+#include <cinttypes>
 #include "debug.h"
 
 namespace
@@ -43,7 +44,7 @@ namespace
             auto idx = r.getAnalogIndex();
             if (idx >= 0)
             {
-                DPRINT(("(%d, %dbits [%d:%d]) ", r.bitOfs_, r.bits_, r.min_, r.max_));
+                DPRINT(("(%d, %dbits [%" PRId64 ":%" PRId64 "]) ", r.bitOfs_, r.bits_, r.min_, r.max_));
             }
         }
         DPRINT(("\n"));
@@ -52,7 +53,7 @@ namespace
 
 void HIDInfo::Report::dump() const
 {
-    DPRINT(("usage = %08x, ofs = %d, bits = %d, min = %d, max = %d, const = %d, array = %d, nullable = %d\n",
+    DPRINT(("usage = %08x, ofs = %d, bits = %d, min = %" PRId64 ", max = %" PRId64 ", const = %d, array = %d, nullable = %d\n",
             usage_, bitOfs_, bits_, min_, max_, isConst_, isArray_, isNullable_));
 }
 
@@ -76,532 +77,294 @@ void HIDInfo::ReportSet::dump() const
 }
 
 void HIDInfo::parseDesc(const uint8_t *p, const uint8_t *tail,
-                        bool enableUnknowns,
-                        bool enableOutput, bool enableFeature)
+                        bool enableUnknowns, bool enableOutput, bool enableFeature)
 {
-    enum class Type
+    // Bound allocations and arithmetic for descriptors supplied by USB devices.
+    constexpr uint32_t maxReportBits = 65535u * 8;
+    constexpr size_t maxFields = 1024;
+    constexpr size_t maxStackDepth = 32;
+    struct Globals
     {
-        MAIN = 0,
-        GLOBAL = 1,
-        LOCAL = 2,
-    };
-    enum class MainTag
-    {
-        INPUT = 8,
-        OUTPUT = 9,
-        FEATURE = 11,
-        COLLECTION = 10,
-        END_COLLECTION = 12,
-    };
-    enum class GlobalTag
-    {
-        USAGE_PAGE = 0,
-        LOGICAL_MINIMUM = 1,
-        LOGICAL_MAXIMUM = 2,
-        PHYSICAL_MINIMUM = 3,
-        PHYSICAL_MAXIMUM = 4,
-        UNIT_EXPONENT = 5,
-        UNIT = 6,
-        REPORT_SIZE = 7,
-        REPORT_ID = 8,
-        REPORT_COUNT = 9,
-        PUSH = 10,
-        POP = 11,
-    };
-    enum class LocalTag
-    {
-        USAGE = 0,
-        USAGE_MINIMUM = 1,
-        USAGE_MAXIMUM = 2,
-        DESIGNATOR_INDEX = 3,
-        DESIGNATOR_MINIMUM = 4,
-        DESIGNATOR_MAXIMUM = 5,
-        STRING_INDEX = 7,
-        STRING_MINIMUM = 8,
-        STRING_MAXIMUM = 9,
-        DELIMITER = 10,
-    };
-    enum MainReportBit
-    {
-        CONSTANT = 1,
-        VARIABLE = 2,
-        RELATIVE = 4,
-        WRAP = 8,
-        NONLINEAR = 16,
-        NO_PREFERRED = 32,
-        NULL_STATE = 64,
-        VOLATILE = 128,
-        BUFFERED_BYTES = 256,
-    };
-
-    struct State
-    {
-        int reportID = 0;
-        int usagePage = 0;
-        std::vector<int> usages;
-        int usageMin = 0;
-        int usageMax = 0;
-        int logicalMin = 0;
-        int logicalMax = 0;
-        int physicalMin = 0;
-        int physicalMax = 0;
-        int reportSize = 0;
-        int reportCount = 0;
-
-        void clearLocal()
-        {
-            usages.clear();
-            usageMin = 0;
-            usageMax = 0;
-        }
-    };
+        uint32_t reportID = 0, usagePage = 0, reportSize = 0, reportCount = 0;
+        int64_t logicalMin = 0, logicalMax = 0;
+    } state;
+    struct UsageRange { uint32_t first, last; };
+    std::vector<UsageRange> usages;
+    bool pendingUsageMin = false;
+    uint32_t usageMin = 0;
+    std::vector<Globals> stack;
+    std::map<int, ReportSet> parsed;
+    size_t fields = 0;
+    unsigned collectionDepth = 0;
+    uint32_t topUsage = 0;
+    bool reportIDs = false;
 
     reportSets_.clear();
+    usageLV0_ = 0;
+    hasReportIDs_ = false;
+    if (!p || !tail || tail < p) return;
 
-    std::vector<State> stateStack;
-    stateStack.emplace_back();
-
-    int collectionLv = 0;
-    int bitOfs = 0;
-
+    auto supported = [](uint32_t usage) {
+        return (usage >> 16) == 9 || usage == 0x10039 ||
+               (usage >= 0x10030 && usage <= 0x10038);
+    };
     while (p < tail)
     {
-        auto prefix = *p++;
-        constexpr int sizetbl[] = {0, 1, 2, 4};
-        auto size = sizetbl[prefix & 0x3];
-        auto type = (prefix >> 2) & 0x3;
-        auto tag = (prefix >> 4) & 0xf;
+        const uint8_t prefix = *p++;
         if (prefix == 0xfe)
         {
-            // long item
-            if (p + 2 > tail)
-            {
-                DPRINT(("long item too short\n"));
-                break;
-            }
-            size = p[0];
-            tag = p[1];
-            // typeはreservedでよい？
+            if (tail - p < 2) return;
+            const unsigned size = p[0];
             p += 2;
+            if (size_t(tail - p) < size) return;
+            p += size; // Unknown long items do not change the short-item state.
+            continue;
         }
-        if (p + size > tail)
-        {
-            DPRINT(("item too short\n"));
-            break;
-        }
-
-        int value = 0;
-        switch (size)
-        {
-        case 1:
-            value = static_cast<int8_t>(*p);
-            break;
-        case 2:
-            value = static_cast<int16_t>(p[0] | (p[1] << 8));
-            break;
-        case 4:
-            value = static_cast<int32_t>(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
-            break;
-        }
-
-        auto &state = stateStack.back();
-
-        auto getBitStepAndAdjustAlign = [&]
-        {
-            bool isBufferedBytes = value & BUFFERED_BYTES;
-            auto bitStep = (isBufferedBytes ? 8 : 1) * state.reportSize;
-            if (isBufferedBytes)
-            {
-                bitOfs = (bitOfs + 7) & ~7;
-            }
-            return bitStep;
+        constexpr unsigned sizes[] = {0, 1, 2, 4};
+        const unsigned size = sizes[prefix & 3];
+        if (size_t(tail - p) < size) return;
+        uint32_t value = 0;
+        for (unsigned i = 0; i < size; ++i) value |= uint32_t(p[i]) << (8 * i);
+        p += size;
+        const auto signedValue = [&]() -> int64_t {
+            if (size && (value & (uint32_t(1) << (size * 8 - 1))))
+                return int64_t(value) - (int64_t(1) << (size * 8));
+            return value;
         };
-
-        auto addReport = [&](auto &v, int bitStep)
-        {
-            auto check = [&](int usage)
-            {
-                if (enableUnknowns)
-                {
-                    return true;
-                }
-
-                if ((usage >> 16) == 0x09 ||
-                    usage == 0x00010039 ||
-                    (usage >= 0x00010030 && usage <= 0x00010038))
-                {
-                    return true;
-                }
-
-                return false;
-            };
-
-            bool isConst = value & CONSTANT;
-            bool isArray = !(value & VARIABLE);
-            bool isNullable = value & NULL_STATE;
-
-            int ofs = bitOfs;
-            int ct = state.reportCount;
-
-            if (state.usages.empty())
-            {
-                if (state.usageMin > 0 && state.usageMax > state.usageMin)
-                {
-                    for (int i = state.usageMin; i <= state.usageMax && ct > 0; ++i, --ct)
-                    {
-                        auto u = (uint32_t(uint16_t(state.usagePage)) << 16) | uint16_t(i);
-                        if (check(u))
-                        {
-                            v.emplace_back();
-                            auto &r = v.back();
-                            r.usage_ = u;
-                            r.min_ = state.logicalMin;
-                            r.max_ = state.logicalMax;
-                            r.bits_ = state.reportSize;
-                            r.bitOfs_ = ofs;
-                            r.isConst_ = isConst;
-                            r.isArray_ = isArray;
-                            r.isNullable_ = isNullable;
-                        }
-                        ofs += bitStep;
-                    }
-                    if (ct > 0)
-                    {
-                        DPRINT(("usage count mismatch, left = %d\n", ct));
-                    }
-                }
-            }
-            else
-            {
-                if (state.usages.size() != ct)
-                {
-                    DPRINT(("usage count mismatch %zu != %d\n", state.usages.size(), ct));
-                    state.usages.resize(ct);
-                }
-                for (auto usage : state.usages)
-                {
-                    auto u = (uint32_t(uint16_t(state.usagePage)) << 16) | uint16_t(usage);
-                    if (check(u))
-                    {
-                        v.emplace_back();
-                        auto &r = v.back();
-                        r.usage_ = u;
-                        r.min_ = state.logicalMin;
-                        r.max_ = state.logicalMax;
-                        r.bits_ = state.reportSize;
-                        r.bitOfs_ = ofs;
-                        r.isConst_ = isConst;
-                        r.isArray_ = isArray;
-                        r.isNullable_ = isNullable;
-                    }
-                    ofs += bitStep;
-                }
-            }
+        const auto usageValue = [&]() {
+            return size == 4 ? value : (state.usagePage << 16) | value;
         };
-
-        switch (static_cast<Type>(type))
+        const unsigned type = (prefix >> 2) & 3;
+        const unsigned tag = prefix >> 4;
+        if (type == 1) // Global items. PUSH/POP must not copy local usages.
         {
-        case Type::MAIN:
-        {
-            auto mainTag = static_cast<MainTag>(tag);
-            switch (mainTag)
+            switch (tag)
             {
-            case MainTag::INPUT:
-            {
-                auto bitStep = getBitStepAndAdjustAlign();
-                {
-                    addReport(reportSets_[state.reportID].inputs_, bitStep);
-                }
-                bitOfs += bitStep * state.reportCount;
-            }
-            break;
-
-            case MainTag::OUTPUT:
-            {
-                auto bitStep = getBitStepAndAdjustAlign();
-                if (enableOutput)
-                {
-                    addReport(reportSets_[state.reportID].outputs_, bitStep);
-                }
-                bitOfs += bitStep * state.reportCount;
-            }
-            break;
-
-            case MainTag::FEATURE:
-            {
-                auto bitStep = getBitStepAndAdjustAlign();
-                if (enableFeature)
-                {
-                    addReport(reportSets_[state.reportID].features_, bitStep);
-                }
-                bitOfs += bitStep * state.reportCount;
-            }
-            break;
-
-            case MainTag::COLLECTION:
-                if (collectionLv == 0 && !state.usages.empty())
-                {
-                    usageLV0_ = (uint32_t(uint16_t(state.usagePage)) << 16) | uint16_t(state.usages[0]);
-                }
-                collectionLv++;
-                state.usages.clear();
-                break;
-
-            case MainTag::END_COLLECTION:
-                --collectionLv;
-                if (collectionLv < 0)
-                {
-                    DPRINT(("collection level underflow\n"));
-                }
-                state.usages.clear();
-                break;
-            }
-
-            state.clearLocal();
-        }
-        break;
-
-        case Type::GLOBAL:
-            switch (static_cast<GlobalTag>(tag))
-            {
-            case GlobalTag::USAGE_PAGE:
+            case 0:
+                if (value > 0xffff) return;
                 state.usagePage = value;
                 break;
-            case GlobalTag::LOGICAL_MINIMUM:
-                state.logicalMin = value;
-                break;
-            case GlobalTag::LOGICAL_MAXIMUM:
-                state.logicalMax = value;
-                break;
-            case GlobalTag::PHYSICAL_MINIMUM:
-                state.physicalMin = value;
-                break;
-            case GlobalTag::PHYSICAL_MAXIMUM:
-                state.physicalMax = value;
-                break;
-            case GlobalTag::UNIT_EXPONENT:
-                break;
-            case GlobalTag::UNIT:
-                break;
-            case GlobalTag::REPORT_SIZE:
+            case 1: state.logicalMin = signedValue(); break;
+            case 2: state.logicalMax = state.logicalMin < 0 ? signedValue() : int64_t(value); break;
+            case 7:
+                if (value > maxReportBits) return;
                 state.reportSize = value;
                 break;
-            case GlobalTag::REPORT_ID:
+            case 8:
+                if (!value || value > 255) return;
                 state.reportID = value;
-                bitOfs = 0;
+                reportIDs = true;
                 break;
-            case GlobalTag::REPORT_COUNT:
+            case 9:
+                if (value > maxReportBits) return;
                 state.reportCount = value;
                 break;
-            case GlobalTag::PUSH:
-                stateStack.emplace_back(state); // stateは参照なので
-                // この先で state に触ってはいけない
+            case 10:
+                if (stack.size() >= maxStackDepth) return;
+                stack.push_back(state);
                 break;
-            case GlobalTag::POP:
-                if (stateStack.size() <= 1)
-                {
-                    DPRINT(("state stack underflow\n"));
-                }
-                else
-                {
-                    // この先で state に触ってはいけない
-                    stateStack.pop_back();
-                }
+            case 11:
+                if (stack.empty()) return;
+                state = stack.back();
+                stack.pop_back();
                 break;
+            default: break; // Physical ranges and units do not affect bit layout.
             }
-            break;
-
-        case Type::LOCAL:
-            switch (static_cast<LocalTag>(tag))
-            {
-            case LocalTag::USAGE:
-                state.usages.push_back(value);
-                break;
-            case LocalTag::USAGE_MINIMUM:
-                state.usageMin = value;
-                break;
-            case LocalTag::USAGE_MAXIMUM:
-                state.usageMax = value;
-                break;
-            case LocalTag::DESIGNATOR_INDEX:
-                break;
-            case LocalTag::DESIGNATOR_MINIMUM:
-                break;
-            case LocalTag::DESIGNATOR_MAXIMUM:
-                break;
-            case LocalTag::STRING_INDEX:
-                break;
-            case LocalTag::STRING_MINIMUM:
-                break;
-            case LocalTag::STRING_MAXIMUM:
-                break;
-            case LocalTag::DELIMITER:
-                break;
-            }
-            break;
         }
-
-        p += size;
-    }
-
-    auto removeRedundant = [](auto &v)
-    {
-        if (v.size() < 2)
+        else if (type == 2) // Local items
         {
-            return;
+            if (tag == 0)
+            {
+                if (usages.size() >= maxFields) return;
+                usages.push_back({usageValue(), usageValue()});
+            }
+            else if (tag == 1)
+            {
+                if (pendingUsageMin) return;
+                usageMin = usageValue();
+                pendingUsageMin = true;
+            }
+            else if (tag == 2)
+            {
+                const uint32_t last = usageValue();
+                if (!pendingUsageMin || last < usageMin ||
+                    (last >> 16) != (usageMin >> 16) || usages.size() >= maxFields) return;
+                usages.push_back({usageMin, last});
+                pendingUsageMin = false;
+            }
+            else if (tag == 10)
+                return; // Alternative usage sets need explicit support; do not misparse them.
         }
-        auto prev = v.begin();
-        for (auto it = prev + 1; it != v.end(); ++it)
+        else if (type == 0) // Main items consume local state
         {
-            if (prev->usage_ == it->usage_)
+            if (pendingUsageMin) return;
+            if (tag == 8 || tag == 9 || tag == 11)
             {
-                it = v.erase(prev);
-                prev = it;
+                const unsigned kind = tag == 8 ? 0 : tag == 9 ? 1 : 2;
+                const uint64_t bits = uint64_t(state.reportSize) * state.reportCount;
+                auto &rs = parsed[state.reportID];
+                auto &offset = rs.bitSizes_[kind];
+                if (!state.reportSize || !state.reportCount || bits > maxReportBits - offset) return;
+                const bool constant = value & 1;
+                const bool array = !(value & 2);
+                const bool keep = kind == 0 || (kind == 1 ? enableOutput : enableFeature);
+                auto &reports = kind == 0 ? rs.inputs_ : kind == 1 ? rs.outputs_ : rs.features_;
+                const bool relevant = enableUnknowns || std::any_of(usages.begin(), usages.end(),
+                    [](const UsageRange &range) {
+                        return (range.first >> 16) == 9 ||
+                               (range.first <= 0x10039 && range.last >= 0x10030);
+                    });
+                if (keep && !constant && !usages.empty() && relevant)
+                {
+                    std::vector<uint32_t> expanded;
+                    for (const auto &range : usages)
+                    {
+                        const uint64_t count = uint64_t(range.last) - range.first + 1;
+                        if (count > maxFields - expanded.size()) return;
+                        for (uint64_t u = range.first; u <= range.last; ++u)
+                            expanded.push_back(uint32_t(u));
+                    }
+                    auto add = [&](uint32_t usage, uint32_t bitOffset) {
+                        Report r;
+                        r.usage_ = usage;
+                        r.bitOfs_ = int(bitOffset);
+                        r.bits_ = int(state.reportSize);
+                        r.min_ = state.logicalMin;
+                        r.max_ = state.logicalMax;
+                        r.isArray_ = array;
+                        r.isNullable_ = value & 0x40;
+                        reports.push_back(std::move(r));
+                        ++fields;
+                    };
+                    if (array)
+                    {
+                        // An array contains selectors, not one flag for each usage.
+                        const auto selected = std::find_if(expanded.begin(), expanded.end(),
+                            [&](uint32_t u) { return enableUnknowns || supported(u); });
+                        if (selected != expanded.end())
+                        {
+                            if (fields == maxFields || state.reportSize > 32) return;
+                            add(*selected, offset);
+                            reports.back().count_ = state.reportCount;
+                            reports.back().arrayUsages_ = std::move(expanded);
+                        }
+                    }
+                    else
+                    {
+                        // HID repeats the final usage when there are more fields than usages.
+                        if (state.reportCount > maxFields) return;
+                        for (uint32_t i = 0; i < state.reportCount; ++i)
+                        {
+                            const auto u = expanded[std::min<size_t>(i, expanded.size() - 1)];
+                            if (!enableUnknowns && !supported(u)) continue;
+                            if (fields == maxFields || state.reportSize > 32) return;
+                            add(u, offset + i * state.reportSize);
+                        }
+                    }
+                }
+                offset += uint32_t(bits); // Independent for each report ID and type.
             }
-            else
+            else if (tag == 10)
             {
-                prev = it;
+                if (collectionDepth == 0 && !usages.empty()) topUsage = usages.front().first;
+                ++collectionDepth;
             }
+            else if (tag == 12)
+            {
+                if (!collectionDepth) return;
+                --collectionDepth;
+            }
+            usages.clear();
+            pendingUsageMin = false;
         }
-    };
-
-    for (auto &v : reportSets_)
-    {
-        auto &rs = v.second;
-        std::sort(rs.inputs_.begin(), rs.inputs_.end());
-        std::sort(rs.outputs_.begin(), rs.outputs_.end());
-        std::sort(rs.features_.begin(), rs.features_.end());
-        removeRedundant(rs.inputs_);
-        removeRedundant(rs.outputs_);
-        removeRedundant(rs.features_);
     }
-
+    if (collectionDepth || !stack.empty() || pendingUsageMin) return;
+    // Report ID zero is reserved once numbered reports are used.
+    if (reportIDs && parsed.count(0)) return;
+    for (auto &entry : parsed)
+    {
+        auto &rs = entry.second;
+        std::stable_sort(rs.inputs_.begin(), rs.inputs_.end());
+        std::stable_sort(rs.outputs_.begin(), rs.outputs_.end());
+        std::stable_sort(rs.features_.begin(), rs.features_.end());
+    }
+    reportSets_ = std::move(parsed);
+    hasReportIDs_ = reportIDs;
+    usageLV0_ = topUsage;
     dump();
 }
 
 bool HIDInfo::parseReport(const uint8_t *p, size_t size,
-                          uint32_t &buttons,
-                          int &hat,
+                          uint32_t &buttons, int &hat,
                           std::array<int, N_ANALOGS> &analogs) const
 {
     buttons = 0;
     hat = -1;
     analogs = {};
+    if (!p || !size || reportSets_.empty()) return false;
+    const unsigned reportID = hasReportIDs_ ? *p++ : 0;
+    if (hasReportIDs_) --size;
+    const auto it = reportSets_.find(reportID);
+    if (it == reportSets_.end()) return false;
+    const auto &rs = it->second;
+    if (size < (rs.bitSizes_[0] + 7) / 8) return false;
 
-    if (!p || !size || reportSets_.empty())
-    {
-        return false;
-    }
-
-    const ReportSet *rs{};
-    if (reportSets_.size() == 1 && reportSets_.begin()->first == 0)
-    {
-        // reportID が指定されていない
-        rs = &reportSets_.begin()->second;
-    }
-    else
-    {
-        int reportID = *p++;
-        --size;
-        auto it = reportSets_.find(reportID);
-        if (it == reportSets_.end())
-        {
-            DPRINT(("unknown reportID %d\n", reportID));
-            return false;
-        }
-        rs = &it->second;
-    }
-
-    bool hasControls = false;
-    for (const auto &r : rs->inputs_)
-    {
-        if (r.isConst_) continue;
-        if (!r.isButton() && !r.isHat() && r.getAnalogIndex() < 0) continue;
-        if (r.bitOfs_ < 0 || r.bits_ <= 0 || r.bits_ > 31 ||
-            size_t(r.bitOfs_) + size_t(r.bits_) > size * 8)
-            return false;
-        hasControls = true;
-    }
-    if (!hasControls) return false;
-
-    auto getBits = [&](int ofs, int bits)
-    {
-        int byteOfs = ofs >> 3;
-        int bitMod = ofs & 7;
-        auto pp = p + byteOfs;
-        int v = *pp++ >> bitMod;
-        int shift = 8 - bitMod;
-        while (shift < bits)
-        {
-            v |= *pp++ << shift;
-            shift += 8;
-        }
-        v &= (1 << bits) - 1;
-        return v;
+    const auto readValue = [&](const Report &r, uint32_t slot = 0) -> int64_t {
+        const uint32_t offset = uint32_t(r.bitOfs_) + slot * uint32_t(r.bits_);
+        uint32_t raw = 0;
+        for (unsigned bit = 0; bit < unsigned(r.bits_); ++bit)
+            raw |= uint32_t((p[(offset + bit) / 8] >> ((offset + bit) % 8)) & 1) << bit;
+        if (r.min_ < 0 && (raw & (uint32_t(1) << (r.bits_ - 1))))
+            return int64_t(raw) - (int64_t(1) << r.bits_);
+        return raw;
     };
-
-    for (auto &r : rs->inputs_)
+    bool hasControls = false;
+    for (const auto &r : rs.inputs_)
     {
         if (r.isConst_) continue;
-        if (r.isButton())
+        if (r.isArray_)
         {
-            int num = (r.usage_ & 0xffff) - 1;
-            if (num >= 0 && num < 32)
+            bool hasButtons = std::any_of(r.arrayUsages_.begin(), r.arrayUsages_.end(),
+                [](uint32_t u) { return (u >> 16) == 9 && (u & 0xffff) >= 1 && (u & 0xffff) <= 32; });
+            if (!hasButtons) continue;
+            hasControls = true;
+            for (uint32_t slot = 0; slot < r.count_; ++slot)
             {
-                bool f = p[r.bitOfs_ >> 3] & (1 << (r.bitOfs_ & 7));
-                if (f)
-                {
-                    buttons |= 1 << num;
-                }
+                const auto value = readValue(r, slot);
+                if (value < r.min_ || value > r.max_) continue;
+                const auto index = uint64_t(value - r.min_);
+                if (index >= r.arrayUsages_.size()) continue;
+                const auto usage = r.arrayUsages_[size_t(index)];
+                const unsigned button = usage & 0xffff;
+                if ((usage >> 16) == 9 && button >= 1 && button <= 32)
+                    buttons |= uint32_t(1) << (button - 1);
+            }
+        }
+        else if (r.isButton())
+        {
+            const unsigned button = r.usage_ & 0xffff;
+            if (button >= 1 && button <= 32)
+            {
+                hasControls = true;
+                if (readValue(r) != 0) buttons |= uint32_t(1) << (button - 1);
             }
         }
         else if (r.isHat())
         {
-            auto v = getBits(r.bitOfs_, r.bits_);
-            if (v >= 0 && v < 8)
-            {
-                hat = v;
-            }
+            hasControls = true;
+            const auto value = readValue(r);
+            const int64_t directions = r.max_ - r.min_ + 1;
+            if (value >= r.min_ && value <= r.max_ && (directions == 4 || directions == 8))
+                hat = int((value - r.min_) * 8 / directions);
         }
-        else if (int analogID = r.getAnalogIndex(); analogID >= 0)
+        else if (int axis = r.getAnalogIndex(); axis >= 0 && r.max_ > r.min_)
         {
-            int32_t v = getBits(r.bitOfs_, r.bits_);
-            if (r.min_ < 0)
-            {
-                // 符号拡張の条件はこれで良いのか？
-                int s = 32 - r.bits_;
-                v = (v << s) >> s;
-            }
-
-            if (r.max_ <= r.min_) continue;
-            v = std::clamp<int>((v - r.min_) * 255 / (r.max_ - r.min_), 0, 255);
-            analogs[analogID] = v;
+            hasControls = true;
+            const auto value = std::clamp(readValue(r), r.min_, r.max_);
+            analogs[axis] = int((value - r.min_) * 255 / (r.max_ - r.min_));
         }
     }
-
-#if 0
-    if (!analogs.empty())
-    {
-        DPRINT(("A: "));
-        for (int v : analogs)
-        {
-            DPRINT(("%d ", v));
-        }
-    }
-
-    DPRINT(("B: "));
-    for (int i = 0; i < 32; ++i)
-    {
-        bool f = buttons & (1u << i);
-        DPRINT(("%d", f));
-    }
-    if (hat >= 0)
-    {
-        DPRINT((" H: %d", hat));
-    }
-    DPRINT(("\n"));
-#endif
-    return true;
+    return hasControls;
 }
 
 void HIDInfo::dump()

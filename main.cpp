@@ -1387,6 +1387,17 @@ void updateDisplay(uint32_t dclk)
         return;
     }
 
+    // Idle status; button input and notifications take priority on higher layers.
+    char modes[] = "   ";
+    int modePos = 3;
+    if (macroStorage_.enabled())
+        modes[--modePos] = 'M';
+    if (appConfig_.rotEnc[0].axis != 0 || appConfig_.rotEnc[1].axis != 0)
+        modes[--modePos] = 'R';
+    if (appConfig_.getAnalogMode() != AppConfig::AnalogMode::NONE)
+        modes[--modePos] = 'A';
+    textScreen_.printBase(TextScreen::WIDTH - 3, 0, modes);
+
     static uint32_t clkct = 0;
     clkct += dclk;
     constexpr uint32_t interval = CPU_CLOCK / 4;
