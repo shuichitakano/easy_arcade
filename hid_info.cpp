@@ -6,7 +6,6 @@
 #include "hid_info.h"
 #include <cstdio>
 #include <algorithm>
-#include "util.h"
 #include "debug.h"
 
 namespace
@@ -250,7 +249,7 @@ void HIDInfo::parseDesc(const uint8_t *p, const uint8_t *tail,
                 {
                     for (int i = state.usageMin; i <= state.usageMax && ct > 0; ++i, --ct)
                     {
-                        auto u = (state.usagePage << 16) | i;
+                        auto u = (uint32_t(uint16_t(state.usagePage)) << 16) | uint16_t(i);
                         if (check(u))
                         {
                             v.emplace_back();
@@ -276,12 +275,12 @@ void HIDInfo::parseDesc(const uint8_t *p, const uint8_t *tail,
             {
                 if (state.usages.size() != ct)
                 {
-                    DPRINT(("usage count mismatch %d != %d\n", state.usages.size(), ct));
+                    DPRINT(("usage count mismatch %zu != %d\n", state.usages.size(), ct));
                     state.usages.resize(ct);
                 }
                 for (auto usage : state.usages)
                 {
-                    auto u = (state.usagePage << 16) | usage;
+                    auto u = (uint32_t(uint16_t(state.usagePage)) << 16) | uint16_t(usage);
                     if (check(u))
                     {
                         v.emplace_back();
@@ -342,7 +341,7 @@ void HIDInfo::parseDesc(const uint8_t *p, const uint8_t *tail,
             case MainTag::COLLECTION:
                 if (collectionLv == 0 && !state.usages.empty())
                 {
-                    usageLV0_ = (state.usagePage << 16) | state.usages[0];
+                    usageLV0_ = (uint32_t(uint16_t(state.usagePage)) << 16) | uint16_t(state.usages[0]);
                 }
                 collectionLv++;
                 state.usages.clear();
@@ -480,7 +479,7 @@ void HIDInfo::parseDesc(const uint8_t *p, const uint8_t *tail,
     dump();
 }
 
-void HIDInfo::parseReport(const uint8_t *p, size_t size,
+bool HIDInfo::parseReport(const uint8_t *p, size_t size,
                           uint32_t &buttons,
                           int &hat,
                           std::array<int, N_ANALOGS> &analogs) const
@@ -489,9 +488,9 @@ void HIDInfo::parseReport(const uint8_t *p, size_t size,
     hat = -1;
     analogs = {};
 
-    if (reportSets_.empty())
+    if (!p || !size || reportSets_.empty())
     {
-        return;
+        return false;
     }
 
     const ReportSet *rs{};
@@ -503,14 +502,27 @@ void HIDInfo::parseReport(const uint8_t *p, size_t size,
     else
     {
         int reportID = *p++;
+        --size;
         auto it = reportSets_.find(reportID);
         if (it == reportSets_.end())
         {
             DPRINT(("unknown reportID %d\n", reportID));
-            return;
+            return false;
         }
         rs = &it->second;
     }
+
+    bool hasControls = false;
+    for (const auto &r : rs->inputs_)
+    {
+        if (r.isConst_) continue;
+        if (!r.isButton() && !r.isHat() && r.getAnalogIndex() < 0) continue;
+        if (r.bitOfs_ < 0 || r.bits_ <= 0 || r.bits_ > 31 ||
+            size_t(r.bitOfs_) + size_t(r.bits_) > size * 8)
+            return false;
+        hasControls = true;
+    }
+    if (!hasControls) return false;
 
     auto getBits = [&](int ofs, int bits)
     {
@@ -530,6 +542,7 @@ void HIDInfo::parseReport(const uint8_t *p, size_t size,
 
     for (auto &r : rs->inputs_)
     {
+        if (r.isConst_) continue;
         if (r.isButton())
         {
             int num = (r.usage_ & 0xffff) - 1;
@@ -560,6 +573,7 @@ void HIDInfo::parseReport(const uint8_t *p, size_t size,
                 v = (v << s) >> s;
             }
 
+            if (r.max_ <= r.min_) continue;
             v = std::clamp<int>((v - r.min_) * 255 / (r.max_ - r.min_), 0, 255);
             analogs[analogID] = v;
         }
@@ -587,6 +601,7 @@ void HIDInfo::parseReport(const uint8_t *p, size_t size,
     }
     DPRINT(("\n"));
 #endif
+    return true;
 }
 
 void HIDInfo::dump()

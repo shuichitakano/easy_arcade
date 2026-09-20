@@ -16,6 +16,15 @@ inline constexpr uint32_t CPU_CLOCK = 125000000;
 #define BOARD_NAME "EA2"
 #define BOARD_VERSION "V1.3.0b3"
 
+// * v1.3.0-beta.4
+//  - Xbox系コントローラーで、他のボタンを押すとXboxボタン(CMD)が解除扱いになり連射を切り替えられない不具合を修正
+//  - HORI Fighting Stick α for Xboxのモード1で、通常ボタンを共有ボタンとの同時押しと誤認する不具合を修正
+//    ※誤認した状態で保存したボタン割り当ては、更新後に再設定が必要
+//  - Switch Pro系USBコントローラーに対応（同じUSB ID・プロトコルを使用する互換機を含む）
+//  - 一部のUSB無線レシーバーの認識を改善し、USB初期化失敗時に認識処理が停止する不具合を修正
+//    ※8BitDo USB Adapter 2 v1.10はSwitch／XInput／DInput／PSCモードで動作確認。Macモードは未対応
+//  - 複数のHIDインターフェースを持つ機器で入力の解析情報が上書きされ、操作できなくなる不具合を修正
+
 // * v1.3.0-beta.3
 //  - .eamacro v1.1の合成方式、Loop Sync、セレクタ占有マスクに対応
 //  - v1.0マクロを自動合成へ移行する互換読み込みに対応

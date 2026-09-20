@@ -13,6 +13,9 @@
 #include "util.h"
 #include "hid_info.h"
 #include "debug.h"
+#include "switch_pro.h"
+#include "usb_enumeration.h"
+#include "pico/time.h"
 
 #include <host/hub.h>
 
@@ -36,12 +39,28 @@ namespace
 {
     bool usbInitialized_ = false;
 
+    struct SwitchProSlot
+    {
+        uint8_t address = 0;
+        uint8_t instance = 0;
+        SwitchPro::Initializer init;
+    };
+    std::array<SwitchProSlot, CFG_TUH_HID> switchProSlots_{};
+
+    SwitchProSlot *findSwitchPro(uint8_t address, uint8_t instance)
+    {
+        for (auto &slot : switchProSlots_)
+            if (slot.address == address && slot.instance == instance)
+                return &slot;
+        return nullptr;
+    }
+
     inline constexpr size_t HUB0_PORT_COUNT = 2;
     inline constexpr size_t MAX_PORTS = 4;
     inline constexpr uint8_t HUB0_ADDR = CFG_TUH_DEVICE_MAX + 1;
     inline constexpr uint8_t HUB1_ADDR = CFG_TUH_DEVICE_MAX + 2; // ポートに差しているHUB
 
-    std::array<HIDInfo, CFG_TUH_DEVICE_MAX> hidInfos_; // devaddr毎のHIDInfo
+    std::map<std::pair<uint8_t, uint8_t>, HIDInfo> hidInfos_; // address + interface instance
     descriptor_hub_desc_t extHubDesc_;                 // 追加HUBのdescriptor
 
     uint8_t hub0Port_[HUB0_PORT_COUNT]{0, 1};
@@ -155,6 +174,17 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
     uint16_t vid, pid;
     tuh_vid_pid_get(dev_addr, &vid, &pid);
 
+    if (SwitchPro::matches(vid, pid))
+    {
+        for (auto &slot : switchProSlots_)
+            if (!slot.address)
+            {
+                slot = {dev_addr, instance, {}};
+                slot.init.setPlayerIndex(getControllerPortID(dev_addr));
+                break;
+            }
+    }
+
     DPRINT(("HID device address = %d, instance = %d is mounted\n", dev_addr, instance));
     DPRINT(("VID = %04x, PID = %04x\r\n", vid, pid));
 
@@ -169,8 +199,9 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
     DPRINT(("port = %d\n", port));
     if (port >= 0 && port < MAX_PORTS)
     {
-        auto &hidInfo = hidInfos_[dev_addr - 1];
-        hidInfo.parseDesc(desc_report, desc_report + desc_len);
+        auto &hidInfo = hidInfos_[{dev_addr, instance}];
+        if (!SwitchPro::matches(vid, pid))
+            hidInfo.parseDesc(desc_report, desc_report + desc_len);
         hidInfo.setVID(vid);
         hidInfo.setPID(pid);
         PadManager::instance().resetLatestPadData(port);
@@ -184,6 +215,19 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
 
 extern "C" void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 {
+    hidInfos_.erase({dev_addr, instance});
+    if (auto *slot = findSwitchPro(dev_addr, instance))
+    {
+        const int port = getControllerPortID(dev_addr);
+        if (port >= 0 && port < MAX_PORTS)
+        {
+            PadManager::PadInput neutral;
+            neutral.vid = 0x057e;
+            neutral.pid = 0x2009;
+            PadManager::instance().setData(port, neutral);
+        }
+        *slot = {};
+    }
     DPRINT(("HID device address = %d, instance = %d is unmounted\n", dev_addr, instance));
 }
 
@@ -196,16 +240,37 @@ extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr,
     // printf("report received: addr:%d, inst %d, port %d\n", dev_addr, instance, port);
     // util::dumpBytes(report, len);
 
-    if (port >= 0 && port < MAX_PORTS)
+    auto info = hidInfos_.find({dev_addr, instance});
+    if (port >= 0 && port < MAX_PORTS && info != hidInfos_.end())
     {
-        auto &hidInfo = hidInfos_[dev_addr - 1];
+        auto &hidInfo = info->second;
 
         PadManager::PadInput padInput;
         padInput.vid = hidInfo.getVID();
         padInput.pid = hidInfo.getPID();
-        hidInfo.parseReport(report, len,
-                            padInput.buttons[0], padInput.hat, padInput.analogs);
-        PadManager::instance().setData(port, padInput);
+        bool valid = true;
+        if (SwitchPro::matches(padInput.vid, padInput.pid))
+        {
+            SwitchPro::Input input;
+            auto *slot = findSwitchPro(dev_addr, instance);
+            valid = false;
+            if (slot)
+            {
+                slot->init.received(report, len);
+                valid = SwitchPro::parseInput(report, len, input, slot->init.calibration());
+            }
+            if (valid)
+            {
+                padInput.buttons[0] = input.buttons;
+                padInput.hat = input.hat;
+                padInput.analogs = input.analogs;
+            }
+        }
+        else
+            valid = hidInfo.parseReport(report, len,
+                                padInput.buttons[0], padInput.hat, padInput.analogs);
+        if (valid)
+            PadManager::instance().setData(port, padInput);
     }
 
     if (!tuh_hid_receive_report(dev_addr, instance))
@@ -310,6 +375,7 @@ void tuh_mount_cb(uint8_t dev_addr)
 
 void tuh_umount_cb(uint8_t dev_addr)
 {
+    arcade_usb_enumeration_removed(dev_addr);
     DPRINT(("A device with address %d is unmounted\n", dev_addr));
     checkExtHub();
 }
@@ -317,4 +383,38 @@ void tuh_umount_cb(uint8_t dev_addr)
 void setUSBIniitalized(bool f)
 {
     usbInitialized_ = f;
+    if (!f)
+    {
+        switchProSlots_ = {};
+        hidInfos_.clear();
+        arcade_usb_enumeration_reset();
+    }
+}
+
+extern "C" void tuh_hid_report_sent_cb(uint8_t dev_addr, uint8_t instance,
+                                        const uint8_t *report, uint16_t len)
+{
+    if (auto *slot = findSwitchPro(dev_addr, instance))
+        slot->init.completed(len);
+}
+
+void hidAppTask()
+{
+    if (!usbInitialized_)
+        return;
+    arcade_usb_enumeration_task();
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    for (auto &slot : switchProSlots_)
+    {
+        if (!slot.address)
+            continue;
+        SwitchPro::Output output;
+        if (slot.init.nextOutput(now, output) &&
+            tuh_hid_send_ready(slot.address, slot.instance) &&
+            tuh_hid_send_report(slot.address, slot.instance, 0,
+                                output.bytes.data(), output.length))
+        {
+            slot.init.submitted(now);
+        }
+    }
 }

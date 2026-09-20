@@ -1626,6 +1626,7 @@ void updateOutput(uint32_t macroFrame)
 }
 
 void setUSBIniitalized(bool f); // hid_app.cpp
+void hidAppTask();
 
 bool powerOn()
 {
@@ -1925,6 +1926,7 @@ int main()
         }
 
         tuh_task();
+        hidAppTask();
         usbStorageTask();
         static bool previousStorageMounted = false;
         const bool storageMounted = usbStorageMounted();

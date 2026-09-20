@@ -22,6 +22,12 @@ endif()
 
 project(arcade_play C CXX ASM)
 
+# Use the pinned host-controller fixes from our TinyUSB fork.
+set(PICO_TINYUSB_PATH "${CMAKE_CURRENT_LIST_DIR}/third_party/tinyusb")
+if (NOT EXISTS "${PICO_TINYUSB_PATH}/src/tusb.c")
+  message(FATAL_ERROR "TinyUSB submodule missing: run git submodule update --init --recursive")
+endif()
+
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
@@ -50,6 +56,8 @@ add_executable(arcade_play
         pad_manager.cpp
         hid_app.cpp
         hid_info.cpp
+        switch_pro.cpp
+        usb_enumeration.cpp
         serializer.cpp
         third_party/tusb_xinput/xinput_host.c
         usb_app_driver.cpp

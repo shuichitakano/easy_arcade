@@ -69,7 +69,7 @@ public:
                    bool enableUnknowns = false,
                    bool enableOutput = false, bool enableFeature = false);
 
-    void parseReport(const uint8_t *p, size_t size,
+    bool parseReport(const uint8_t *p, size_t size,
                      uint32_t &buttons,
                      int &hat,
                      std::array<int, N_ANALOGS> &analogs) const;
