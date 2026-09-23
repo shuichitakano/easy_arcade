@@ -40,6 +40,18 @@ namespace
 {
     bool usbInitialized_ = false;
 
+    // Keep the first IN submission in the application task, after mounting.
+    std::array<bool, CFG_TUH_DEVICE_MAX> xinputInputPending_{};
+
+    void xinputStartupTask()
+    {
+        for (uint8_t address = 1; address <= CFG_TUH_DEVICE_MAX; ++address) {
+            auto &pending = xinputInputPending_[address - 1];
+            if (!pending || !tuh_mounted(address)) continue;
+            pending = false;
+            tuh_xinput_receive_report(address, 0);
+        }
+    }
 
     struct SwitchProSlot
     {
@@ -309,6 +321,12 @@ extern "C"
         DPRINT(("XINPUT device address = %d, instance = %d is mounted\n", dev_addr, instance));
         DPRINT(("VID = %04x, PID = %04x\r\n", vid, pid));
 
+        if (vid == 0x045e && pid == 0x028e && instance == 0 &&
+            dev_addr && dev_addr <= CFG_TUH_DEVICE_MAX && xinput_itf->type == XBOX360_WIRED) {
+            xinputInputPending_[dev_addr - 1] = true;
+            return;
+        }
+
         if (xinput_itf->connected ||
             xinput_itf->type != XBOX360_WIRELESS)
         {
@@ -340,6 +358,8 @@ extern "C"
 
     void tuh_xinput_umount_cb(uint8_t dev_addr, uint8_t instance)
     {
+        if (dev_addr && dev_addr <= CFG_TUH_DEVICE_MAX && instance == 0)
+            xinputInputPending_[dev_addr - 1] = false;
         DPRINT(("XINPUT device address = %d, instance = %d is unmounted\n", dev_addr, instance));
     }
 }
@@ -364,6 +384,7 @@ void setUSBIniitalized(bool f)
     {
         switchProSlots_ = {};
         switchRecovery_ = {};
+        xinputInputPending_ = {};
         hidInfos_.clear();
         arcade_usb_enumeration_reset();
     }
@@ -381,6 +402,7 @@ void hidAppTask()
     if (!usbInitialized_)
         return;
     arcade_usb_enumeration_task();
+    xinputStartupTask();
     const uint32_t now = to_ms_since_boot(get_absolute_time());
     for (auto &slot : switchProSlots_)
     {

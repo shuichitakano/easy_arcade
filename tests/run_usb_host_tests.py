@@ -37,6 +37,8 @@ with tempfile.TemporaryDirectory(prefix='arcade-usb-tests-') as directory:
         TINYUSB / 'portable/raspberrypi/rp2040/hcd_rp2040.c',
         'bool hcd_edpt_abort_xfer('))
     cases = [
+        ('xinput_startup_test', []),
+        ('xinput_descriptors_test', ['usb_enumeration.cpp']),
         ('usb_hub_reset_status_test', []),
         ('ext_hub_cache_test', []),
         ('usb_hub_enable_test', []),
@@ -49,6 +51,9 @@ with tempfile.TemporaryDirectory(prefix='arcade-usb-tests-') as directory:
     (tmp / 'ext_hub_cache_under_test.inc').write_text(
         function_source(TINYUSB / 'host/hub.c', 'uint8_t hub_port_count(') +
         function_source(ROOT / 'hid_app.cpp', 'void checkExtHub()'))
+    startup = 'std::array<bool, CFG_TUH_DEVICE_MAX> xinputInputPending_{};\n'
+    startup += function_source(ROOT / 'hid_app.cpp', 'void xinputStartupTask()')
+    (tmp / 'xinput_startup_under_test.inc').write_text(startup)
     (tmp / 'hub_enable_under_test.inc').write_text(function_source(
         TINYUSB / 'host/hub.c', 'static void hub_port_get_status_complete (tuh_xfer_t* xfer)\n{'))
     (tmp / 'tinyusb_reenumerate_under_test.inc').write_text(function_source(

@@ -8,6 +8,8 @@ static uintptr_t lastData;
 static bool accept = true;
 uint64_t get_absolute_time() { return now; }
 extern "C" void tuh_enumeration_recovery_task() {}
+bool tuh_vid_pid_get(uint8_t, uint16_t *vid, uint16_t *pid) { *vid=*pid=0; return true; }
+bool tuh_control_xfer(tuh_xfer_t*) { assert(false); return false; }
 bool tuh_configuration_set(uint8_t a, uint8_t, tuh_xfer_cb_t, uintptr_t d)
 {
     if (!accept) return false;

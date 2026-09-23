@@ -1,7 +1,19 @@
 #pragma once
 #include <stdint.h>
 #define CFG_TUH_DEVICE_MAX 7
-struct tuh_xfer_t {};
+struct tusb_control_request_t {
+    uint8_t bmRequestType{}, bRequest{};
+    uint16_t wValue{}, wIndex{}, wLength{};
+};
+struct tuh_xfer_t {
+    uint8_t daddr{};
+    uint32_t result{}, actual_len{};
+    tusb_control_request_t *setup{};
+    uint8_t *buffer{};
+    void (*complete_cb)(tuh_xfer_t*){};
+};
+bool tuh_vid_pid_get(uint8_t, uint16_t*, uint16_t*);
+bool tuh_control_xfer(tuh_xfer_t*);
 using tuh_xfer_cb_t = void (*)(tuh_xfer_t *);
 bool tuh_configuration_set(uint8_t, uint8_t, tuh_xfer_cb_t, uintptr_t);
 
