@@ -321,7 +321,7 @@ USBメモリから読み込んだプロファイルは最大8件までFlashに�
 
 最新版のファームウェアは以下からダウンロード可能です。 
 
-[v1.3.0](https://github.com/shuichitakano/easy_arcade/releases/download/v1.3.0/firmware_v1_3_0.zip)
+[v1.3.1](https://github.com/shuichitakano/easy_arcade/releases/download/v1.3.1/firmware_v1_3_1.zip)
 
 ファームウェアをアップデートすると全ての設定がリセットされることがあります。
 あらかじめご了承ください。

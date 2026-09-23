@@ -539,7 +539,9 @@ int PadManager::ButtonConfigMode::nButtons(const PadManager &mgr) const
 
 void PadManager::ButtonConfigMode::next(PadManager &mgr)
 {
-    buttonSets_.push_back(curButtonSet_);
+    // 仮想ボタンを飛ばしても、保存配列の添字は論理ボタン番号に合わせる。
+    buttonSets_.resize(curButton_ + 1);
+    buttonSets_[curButton_] = curButtonSet_;
     curButtonSet_.clear();
 
     curButton_ = curButton_ + 1;

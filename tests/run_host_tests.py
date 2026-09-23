@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory(prefix='arcade-host-tests-') as directory:
         ], cwd=root, check=True)
         subprocess.run([str(binary)], cwd=root, env=env, check=True)
     for script in ['xinput_guide_test.py', 'xinput_report_length_test.py',
-                   'run_usb_host_tests.py']:
+                   'run_usb_host_tests.py', 'run_pad_config_tests.py']:
         subprocess.run([sys.executable, str(root / 'tests' / script)],
                        cwd=root, env=env, check=True)
 print('All host tests passed')
