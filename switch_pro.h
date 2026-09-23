@@ -44,12 +44,41 @@ struct Output
     uint16_t length = 0;
 };
 
+// Initializer ACKs alone do not prove that normal input has started.
+class InputStartupWatch
+{
+public:
+    void start(uint32_t now) { mountedAt_ = now; received_ = false; }
+    void received(bool valid) { received_ |= valid; }
+    bool expired(uint32_t now) const
+    {
+        return !received_ && uint32_t(now - mountedAt_) >= 10000;
+    }
+private:
+    uint32_t mountedAt_ = 0;
+    bool received_ = false;
+};
+
+// Survives interface unmount/remount so a failed device cannot reset forever.
+class RecoveryBudget
+{
+public:
+    bool ready(uint32_t now) const
+    {
+        return attempts_ < 2 && (!attempts_ || uint32_t(now - lastAttempt_) >= 3000);
+    }
+    void submitted(uint32_t now) { ++attempts_; lastAttempt_ = now; }
+private:
+    uint32_t lastAttempt_ = 0;
+    uint8_t attempts_ = 0;
+};
+
 class Initializer
 {
 public:
     enum class State : uint8_t
     {
-        Handshake, BaudRate, HandshakeAgain, EnableUsb,
+        Handshake, HandshakeAgain, EnableUsb,
         FactoryCalibration, UserCalibration, ReportMode, PlayerLights,
         Ready, Failed
     };

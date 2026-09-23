@@ -91,7 +91,6 @@ void Initializer::timedOut()
 {
     switch (state_)
     {
-    case State::BaudRate: advance(State::HandshakeAgain); break;
     case State::HandshakeAgain: advance(State::EnableUsb); break;
     case State::FactoryCalibration: advance(State::UserCalibration); break;
     case State::UserCalibration: advance(State::ReportMode); break;
@@ -120,7 +119,7 @@ bool Initializer::nextOutput(uint32_t now, Output &output)
         return false;
     }
     // USB output reports include the ID and zero padding to 64 bytes.
-    // Short writes can disconnect compatible adapters during baud setup.
+    // Short writes can disconnect compatible adapters during initialization.
     output = {};
     if (state_ == State::ReportMode || state_ == State::PlayerLights ||
         state_ == State::FactoryCalibration || state_ == State::UserCalibration)
@@ -147,8 +146,7 @@ bool Initializer::nextOutput(uint32_t now, Output &output)
     else
     {
         output.bytes[0] = 0x80;
-        output.bytes[1] = state_ == State::EnableUsb ? 0x04 :
-                          state_ == State::BaudRate ? 0x03 : 0x02;
+        output.bytes[1] = state_ == State::EnableUsb ? 0x04 : 0x02;
         output.length = 64;
     }
     return true;
@@ -183,8 +181,7 @@ void Initializer::received(const uint8_t *report, size_t length)
     if (length >= 2 && report[0] == 0x81)
     {
         if (state_ == State::Handshake && report[1] == 0x02)
-            advance(State::BaudRate);
-        else if (state_ == State::BaudRate && report[1] == 0x03)
+            // 80 03は8BitDo Arcade Stickの無線Switch接続が切れるため省略。手元の互換機は省略で動作確認済み。
             advance(State::HandshakeAgain);
         else if (state_ == State::HandshakeAgain && report[1] == 0x02)
             advance(State::EnableUsb);

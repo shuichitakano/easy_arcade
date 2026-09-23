@@ -89,19 +89,13 @@ void testInitialization(bool ackFirst)
     if (!ackFirst)
         init.completed(64);
     init.received(handshake, sizeof(handshake));
-    assert(init.state() == Initializer::State::BaudRate);
+    assert(init.state() == Initializer::State::HandshakeAgain);
     if (ackFirst)
     {
         assert(!init.nextOutput(2, output));
         init.completed(64); // Late handshake completion must not skip EnableUsb.
-        assert(init.state() == Initializer::State::BaudRate);
+        assert(init.state() == Initializer::State::HandshakeAgain);
     }
-    assert(init.nextOutput(3, output));
-    assert(output.length == 64 && output.bytes[1] == 3);
-    init.submitted(3);
-    init.completed(64);
-    const uint8_t baud[] = {0x81, 0x03};
-    init.received(baud, sizeof(baud));
     assert(init.nextOutput(4, output) && output.bytes[1] == 2);
     init.submitted(4);
     init.completed(64);
@@ -238,7 +232,7 @@ void testSpiRepliesAndOptionalTimeouts()
     init.submitted(now);
     init.completed(64);
     init.received(handshake, 2);
-    // A clone with no baud/re-handshake support must still proceed.
+    // A clone with no re-handshake support must still proceed.
     auto timeoutStage = [&] {
         for (int i = 0; i < 3; ++i)
         {
@@ -249,7 +243,6 @@ void testSpiRepliesAndOptionalTimeouts()
         }
         assert(!init.nextOutput(now, output));
     };
-    timeoutStage();
     assert(init.state() == Initializer::State::HandshakeAgain);
     timeoutStage();
     assert(init.state() == Initializer::State::EnableUsb);
@@ -318,6 +311,25 @@ void testSpiRepliesAndOptionalTimeouts()
 
 int main()
 {
+    RecoveryBudget recovery;
+    const uint32_t start = 0xffffff00;
+    assert(recovery.ready(start));
+    recovery.submitted(start);
+    assert(!recovery.ready(start + 2999));
+    assert(recovery.ready(start + 3000));
+    recovery.submitted(start + 3000);
+    assert(!recovery.ready(start + 6000));
+    recovery = {}; // Only a new EA2 power session restores the retry budget.
+    assert(recovery.ready(0));
+    InputStartupWatch startup;
+    startup.start(start);
+    startup.received(false); // A handshake ACK is not an input report.
+    assert(!startup.expired(start + 9999));
+    assert(startup.expired(start + 10000));
+    startup.received(true);
+    assert(!startup.expired(start + 60000));
+    startup.start(100);
+    assert(startup.expired(10100));
     testInput();
     testInitialization(false);
     testInitialization(true);

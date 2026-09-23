@@ -79,7 +79,7 @@ add_executable(arcade_play
         )
 
 pico_set_program_name(arcade_play "arcade_play")
-pico_set_program_version(arcade_play "1.3.0")
+pico_set_program_version(arcade_play "1.3.1")
 
 pico_enable_stdio_uart(arcade_play 1)
 pico_enable_stdio_usb(arcade_play 0)

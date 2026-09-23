@@ -14,7 +14,11 @@ inline constexpr uint32_t CPU_CLOCK = 125000000;
 #if EA_V2
 
 #define BOARD_NAME "EA2"
-#define BOARD_VERSION "V1.3.0"
+#define BOARD_VERSION "V1.3.1"
+
+// * v1.3.1
+//  - 8BitDo Arcade Stick 対応を強化
+//  - USBハブ挿抜に関する不具合を修正
 
 // * v1.3.0
 //  - アイドル画面の右上にアナログモード(A)・ロータリーエンコーダ(R)・マクロ(M)の有効状態を表示

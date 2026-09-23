@@ -10,7 +10,14 @@ using Callback = void(*)(tuh_xfer_t*);
 static void process_enumeration(tuh_xfer_t*) {}
 static void unrelated(tuh_xfer_t*) {}
 constexpr uint8_t CONTROL_STAGE_IDLE=0, XFER_RESULT_FAILED=1;
-static struct { bool enumerating; uint8_t hub_port; } _dev0;
+static struct { bool enumerating; uint8_t hub_port, hub_addr, rhport; } _dev0;
+static struct Device { bool connected; } parent{true};
+static Device* get_device(uint8_t addr) { assert(addr==9); return &parent; }
+static unsigned closes, cancels;
+static void hcd_device_close(uint8_t rhport, uint8_t addr) {
+    assert(rhport==0 && addr==0); ++closes;
+}
+static void tuh_enumeration_cancel_cb() { ++cancels; }
 static struct { uint8_t stage,daddr; Callback complete_cb; } _ctrl_xfer;
 static uint32_t now,_control_progress_ms;
 static bool initialized=true, active=true, abortAllowed=true;
@@ -31,7 +38,7 @@ static void hcd_event_xfer_complete(uint8_t addr,uint8_t ep,uint32_t len,uint8_t
 }
 #include "tinyusb_recovery_under_test.inc"
 int main() {
-    _dev0={true,1}; _ctrl_xfer={3,1,process_enumeration};
+    _dev0={true,1,0,0}; _ctrl_xfer={3,1,process_enumeration};
     now=999; tuh_enumeration_recovery_task(); assert(abortCalls==0);
     // An unrelated attach pending in the queue must not starve recovery.
     events.push_back(99);
@@ -45,5 +52,21 @@ int main() {
     tuh_enumeration_recovery_task(); assert(events.size()==2 && active);
     abortAllowed=true; _control_progress_ms=0xffffff00u; now=0x2e8;
     tuh_enumeration_recovery_task(); assert(events.size()==3); // wrap-safe 1000 ms
+    // An upstream hub was removed during its child's enumeration, with a
+    // different attach queued. IDLE EP0 must not leave enumeration locked.
+    _dev0={true,1,9,0}; _ctrl_xfer={0,9,unrelated};
+    tuh_enumeration_recovery_task(); assert(_dev0.enumerating && closes==0);
+    parent.connected=false;
+    _ctrl_xfer.stage=3;
+    tuh_enumeration_recovery_task(); assert(_dev0.enumerating && closes==0);
+    _ctrl_xfer.stage=0;
+    initialized=false;
+    tuh_enumeration_recovery_task(); assert(closes==0);
+    initialized=true;
+    tuh_enumeration_recovery_task();
+    assert(!_dev0.enumerating && closes==1 && cancels==1);
+    tuh_enumeration_recovery_task(); assert(closes==1 && cancels==1);
+    _dev0={true,0,0,0};
+    tuh_enumeration_recovery_task(); assert(_dev0.enumerating && closes==1);
     std::puts("USB recovery tests passed");
 }

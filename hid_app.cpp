@@ -35,15 +35,18 @@ extern "C"
     // 邪悪すぎるのでどうにかしたい
 }
 
+
 namespace
 {
     bool usbInitialized_ = false;
+
 
     struct SwitchProSlot
     {
         uint8_t address = 0;
         uint8_t instance = 0;
         SwitchPro::Initializer init;
+        SwitchPro::InputStartupWatch startup;
     };
     std::array<SwitchProSlot, CFG_TUH_HID> switchProSlots_{};
 
@@ -57,11 +60,11 @@ namespace
 
     inline constexpr size_t HUB0_PORT_COUNT = 2;
     inline constexpr size_t MAX_PORTS = 4;
+    std::array<SwitchPro::RecoveryBudget, MAX_PORTS> switchRecovery_{};
     inline constexpr uint8_t HUB0_ADDR = CFG_TUH_DEVICE_MAX + 1;
     inline constexpr uint8_t HUB1_ADDR = CFG_TUH_DEVICE_MAX + 2; // ポートに差しているHUB
 
     std::map<std::pair<uint8_t, uint8_t>, HIDInfo> hidInfos_; // address + interface instance
-    descriptor_hub_desc_t extHubDesc_;                 // 追加HUBのdescriptor
 
     uint8_t hub0Port_[HUB0_PORT_COUNT]{0, 1};
     uint8_t hub1PortOffset_ = 0;
@@ -103,16 +106,19 @@ namespace
         return r;
     }
 
-    void checkExtHubCb(tuh_xfer_t *xfer)
+    void checkExtHub()
     {
-        if (XFER_RESULT_SUCCESS != xfer->result)
+        if (!usbInitialized_) return;
+        // Mount/unmount callbacks run inside enumeration. A new EP0 request
+        // here can steal the endpoint from the next enumeration request.
+        const uint8_t ports = hub_port_count(HUB1_ADDR);
+        if (!ports)
         {
-            DPRINT(("Failed to get hub descriptor\n"));
             resetExtHubPortInfo();
             return;
         }
 
-        hub1PortCount_ = extHubDesc_.bNbrPorts;
+        hub1PortCount_ = ports;
 
         auto [extHubHub, extHubPort] = getHubPort(HUB1_ADDR);
         DPRINT(("extHub: hub %d, port %d, %d ports.\n",
@@ -134,37 +140,6 @@ namespace
                 hub0Port_[0], hub0Port_[1], hub1PortOffset_));
     }
 
-    void checkExtHub()
-    {
-        if (!usbInitialized_)
-        {
-            return;
-        }
-
-        tusb_control_request_t const request = {
-            .bmRequestType_bit = {
-                .recipient = TUSB_REQ_RCPT_DEVICE,
-                .type = TUSB_REQ_TYPE_CLASS,
-                .direction = TUSB_DIR_IN},
-            .bRequest = HUB_REQUEST_GET_DESCRIPTOR,
-            .wValue = 0,
-            .wIndex = 0,
-            .wLength = sizeof(descriptor_hub_desc_t)};
-
-        tuh_xfer_t xfer = {
-            .daddr = HUB1_ADDR,
-            .ep_addr = 0,
-            .setup = &request,
-            .buffer = (uint8_t *)&extHubDesc_,
-            .complete_cb = checkExtHubCb,
-            .user_data = 0};
-
-        if (!tuh_control_xfer(&xfer))
-        {
-            DPRINT(("ext hub is not connected.\n"));
-            resetExtHubPortInfo();
-        }
-    }
 }
 
 extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_report, uint16_t desc_len)
@@ -179,7 +154,8 @@ extern "C" void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t con
         for (auto &slot : switchProSlots_)
             if (!slot.address)
             {
-                slot = {dev_addr, instance, {}};
+                slot = {dev_addr, instance, {}, {}};
+                slot.startup.start(to_ms_since_boot(get_absolute_time()));
                 slot.init.setPlayerIndex(getControllerPortID(dev_addr));
                 break;
             }
@@ -258,6 +234,7 @@ extern "C" void tuh_hid_report_received_cb(uint8_t dev_addr,
             {
                 slot->init.received(report, len);
                 valid = SwitchPro::parseInput(report, len, input, slot->init.calibration());
+                slot->startup.received(valid);
             }
             if (valid)
             {
@@ -386,6 +363,7 @@ void setUSBIniitalized(bool f)
     if (!f)
     {
         switchProSlots_ = {};
+        switchRecovery_ = {};
         hidInfos_.clear();
         arcade_usb_enumeration_reset();
     }
@@ -408,6 +386,18 @@ void hidAppTask()
     {
         if (!slot.address)
             continue;
+        if (slot.init.state() == SwitchPro::Initializer::State::Failed ||
+            (slot.init.state() == SwitchPro::Initializer::State::Ready && slot.startup.expired(now)))
+        {
+            const int port = getControllerPortID(slot.address);
+            if (port >= 0 && port < MAX_PORTS && switchRecovery_[port].ready(now) &&
+                tuh_device_reenumerate(slot.address))
+            {
+                switchRecovery_[port].submitted(now);
+                return; // The normal host task will unmount and mount afresh.
+            }
+            continue;
+        }
         SwitchPro::Output output;
         if (slot.init.nextOutput(now, output) &&
             tuh_hid_send_ready(slot.address, slot.instance) &&

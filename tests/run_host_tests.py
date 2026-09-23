@@ -12,6 +12,7 @@ env = {**os.environ, 'UBSAN_OPTIONS': 'halt_on_error=1'}
 with tempfile.TemporaryDirectory(prefix='arcade-host-tests-') as directory:
     for name, source in [('hid_info_test', 'hid_info.cpp'),
                          ('switch_pro_test', 'switch_pro.cpp'),
+                         ('switch_baud_compat_test', 'switch_pro.cpp'),
                          ('macro_profile_test', 'macro_profile.cpp')]:
         binary = Path(directory) / name
         subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
