@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(prefix='arcade-pad-config-') as directory:
     binary = tmp / 'pad_config_test'
     subprocess.run(shlex.split(os.environ.get('CXX', 'c++')) + [
         '-std=c++17', '-Wall', '-Wextra', '-Werror',
-        '-fsanitize=address,undefined', '-I.', '-I' + str(tmp),
+        '-fsanitize=address,undefined', '-I.', '-Iexternal/ea_input/include/ea_input', '-I' + str(tmp),
         'tests/pad_config_test.cpp', '-o', str(binary),
     ], cwd=root, check=True)
     subprocess.run([str(binary)], check=True,

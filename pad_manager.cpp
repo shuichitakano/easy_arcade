@@ -1,3 +1,5 @@
+#include "pad_default_config.h"
+#include "pad_config_serialization.h"
 /*
  * author : Shuichi TAKANO
  * since  : Sun Jan 14 2024 03:14:17
@@ -75,31 +77,7 @@ namespace
 
 PadManager::PadManager()
 {
-    using T = PadConfig::Type;
-    using AP = PadConfig::AnalogPos;
-    using HP = PadConfig::HatPos;
-    using B = PadStateButton;
-    PadConfig defaultConfig{0, 0, 0, {
-                                         {T::ANALOG, 0, AP::L, AP::MID, {}, static_cast<int>(B::LEFT)},
-                                         {T::ANALOG, 0, AP::H, AP::MID, {}, static_cast<int>(B::RIGHT)},
-                                         {T::ANALOG, 1, AP::L, AP::MID, {}, static_cast<int>(B::UP)},
-                                         {T::ANALOG, 1, AP::H, AP::MID, {}, static_cast<int>(B::DOWN)},
-                                         {T::HAT, 0, {}, {}, HP::LEFT, static_cast<int>(B::LEFT)},
-                                         {T::HAT, 0, {}, {}, HP::RIGHT, static_cast<int>(B::RIGHT)},
-                                         {T::HAT, 0, {}, {}, HP::UP, static_cast<int>(B::UP)},
-                                         {T::HAT, 0, {}, {}, HP::DOWN, static_cast<int>(B::DOWN)},
-                                         {T::BUTTON, 0, {}, {}, {}, static_cast<int>(B::A)},
-                                         {T::BUTTON, 1, {}, {}, {}, static_cast<int>(B::B)},
-                                         {T::BUTTON, 2, {}, {}, {}, static_cast<int>(B::COIN)},
-                                         {T::BUTTON, 3, {}, {}, {}, static_cast<int>(B::START)},
-                                         {T::BUTTON, 4, {}, {}, {}, static_cast<int>(B::C)},
-                                         {T::BUTTON, 5, {}, {}, {}, static_cast<int>(B::D)},
-                                         {T::BUTTON, 6, {}, {}, {}, static_cast<int>(B::E)},
-                                         {T::BUTTON, 7, {}, {}, {}, static_cast<int>(B::F)},
-                                     },
-                            {}};
-
-    translator_.setDefaultConfig(std::move(defaultConfig));
+    setDefaultPadConfig(translator_);
 }
 
 void PadManager::reset()
@@ -344,12 +322,12 @@ void PadManager::setRapidFireSyncMask(uint32_t v)
 
 void PadManager::serialize(Serializer &s) const
 {
-    translator_.serialize(s);
+    serializePadTranslator(translator_, s);
 }
 
 void PadManager::deserialize(Deserializer &s)
 {
-    translator_.deserialize(s);
+    deserializePadTranslator(translator_, s);
 }
 
 void PadManager::setLED(bool on) const

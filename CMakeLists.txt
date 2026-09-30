@@ -51,12 +51,9 @@ configure_file("${CMAKE_CURRENT_LIST_DIR}/fatfs/ffconf.h"
 
 add_executable(arcade_play 
         main.cpp
-        pad_state.cpp
-        pad_translator.cpp
         pad_manager.cpp
+        pad_config_serialization.cpp
         hid_app.cpp
-        hid_info.cpp
-        switch_pro.cpp
         usb_enumeration.cpp
         serializer.cpp
         third_party/tusb_xinput/xinput_host.c
@@ -64,7 +61,6 @@ add_executable(arcade_play
         usb_midi.cpp
         usb_storage.cpp
         config_json.cpp
-        macro_profile.cpp
         macro_storage.cpp
         ${FATFS_BUILD_DIR}/ff.c
         ${FATFS_BUILD_DIR}/ffunicode.c
@@ -77,6 +73,12 @@ add_executable(arcade_play
         pca9555.cpp
         i2c_manager.cpp
         )
+
+if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/external/ea_input/CMakeLists.txt")
+  message(FATAL_ERROR "ea_input submodule missing: run git submodule update --init --recursive")
+endif()
+add_subdirectory(external/ea_input)
+target_link_libraries(arcade_play PRIVATE ea_input::ea_input)
 
 pico_set_program_name(arcade_play "arcade_play")
 pico_set_program_version(arcade_play "1.3.1")

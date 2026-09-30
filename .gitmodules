@@ -11,3 +11,6 @@
 	path = third_party/tinyusb
 	url = https://github.com/shuichitakano/tinyusb.git
 	branch = easy-arcade
+[submodule "external/ea_input"]
+	path = external/ea_input
+	url = https://github.com/shuichitakano/ea_input.git
