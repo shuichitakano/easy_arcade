@@ -14,7 +14,12 @@ inline constexpr uint32_t CPU_CLOCK = 125000000;
 #if EA_V2
 
 #define BOARD_NAME "EA2"
-#define BOARD_VERSION "V1.3.1"
+#define BOARD_VERSION "V1.3.2"
+
+// * v1.3.2
+//  - マクロプロファイルの連射速度が設定の半速になる不具合を修正
+//  - 同期ループの停止判定を修正（1 tick周期・フレーム飛び）
+//  - ソフトウェア連射の経過時間・切替境界の処理を修正
 
 // * v1.3.1
 //  - 8BitDo Arcade Stick 対応を強化

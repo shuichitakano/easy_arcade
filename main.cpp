@@ -1518,13 +1518,18 @@ public:
 
     void update(int dclk, int ctPerSec)
     {
-        clk_ += dclk;
-        int interval = CPU_CLOCK / (ctPerSec << 1);
-        if (clk_ > interval)
+        const uint32_t interval = CPU_CLOCK / (ctPerSec << 1);
+        // dclk is nonnegative and at most INT_MAX; clk_ is below the
+        // slowest interval (CPU_CLOCK / 2), so their sum fits uint32_t.
+        const uint32_t elapsed = static_cast<uint32_t>(clk_) + static_cast<uint32_t>(dclk);
+        if (elapsed < interval)
         {
-            clk_ -= interval;
-            ++counter_;
+            clk_ = static_cast<int>(elapsed);
+            return;
         }
+        // Preserve both missed toggles and the fractional interval remainder.
+        counter_ += static_cast<uint32_t>(elapsed / interval);
+        clk_ = static_cast<int>(elapsed % interval);
     }
 };
 
